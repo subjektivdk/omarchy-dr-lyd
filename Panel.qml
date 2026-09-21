@@ -187,6 +187,11 @@ Panel {
         root.lastFetched = Date.now()
         root.fetchError = ""
         root.fetchRetries = 0
+        if (root.pendingPlaySlug) {
+          var slug = root.pendingPlaySlug
+          root.pendingPlaySlug = ""
+          root.switchTo(slug)
+        }
       }
     }
   }
@@ -211,11 +216,38 @@ Panel {
   property int playToken: 0
   property int mpvRunToken: -1
 
-  function switchTo(slug) {
+  // A play request made before the directory has loaded (middle-click right
+  // after shell start) waits here and is honoured when the fetch lands.
+  property string pendingPlaySlug: ""
+
+  // Shown in the header while nothing is playing, e.g. after mpv died.
+  property string playbackError: ""
+
+  // One automatic restart when a live stream drops. The budget resets on
+  // any user action and when a stream has run long enough (30 s) to count
+  // as having worked, so a later drop gets its own retry.
+  property int reconnectAttempts: 0
+  property double mpvStartedAt: 0
+
+  function switchTo(slug, isReconnect) {
+    if (!isReconnect) {
+      root.reconnectAttempts = 0
+      reconnectTimer.stop()
+    }
+
     var channel = root.channelBySlug(slug)
-    if (!channel) return
+    if (!channel) {
+      if (root.channels.length === 0) {
+        root.pendingPlaySlug = slug
+        root.refreshIfStale()
+      }
+      return
+    }
     var url = Model.streamUrlFor(channel, root.quality)
-    if (!url) return
+    if (!url) {
+      root.playbackError = "Ingen stream fundet for " + channel.title
+      return
+    }
 
     root.playToken++
     var token = root.playToken
@@ -226,6 +258,8 @@ Panel {
       mpvProc.command = ["mpv", "--no-video", "--idle=no", "--really-quiet", "--force-media-title=DR " + channel.title, "--", url]
       mpvProc.running = true
       root.mpvRunToken = token
+      root.mpvStartedAt = Date.now()
+      root.playbackError = ""
       root.playingSlug = slug
       root.lastPlayed = slug
       root.scheduleStateSave()
@@ -234,12 +268,16 @@ Panel {
 
   function stop() {
     root.playToken++
+    root.pendingPlaySlug = ""
+    root.playbackError = ""
+    root.reconnectAttempts = 0
+    reconnectTimer.stop()
     mpvProc.running = false
     root.playingSlug = ""
   }
 
   function togglePlay(slug) {
-    if (root.playingSlug === slug) root.stop()
+    if (root.playingSlug === slug || root.pendingPlaySlug === slug) root.stop()
     else root.switchTo(slug)
   }
 
@@ -250,16 +288,36 @@ Panel {
   Process {
     id: mpvProc
     onExited: function(exitCode) {
-      // mpv died (network drop, stream ended, etc.) without us stopping it —
-      // but only clear state if no newer switch/stop has since superseded it.
-      if (root.mpvRunToken === root.playToken) root.playingSlug = ""
+      // Only react if no newer switch/stop has superseded this process.
+      if (root.mpvRunToken !== root.playToken) return
+
+      var slug = root.playingSlug
+      var title = root.playingTitle
+      root.playingSlug = ""
+      if (!slug) return
+
+      if (Date.now() - root.mpvStartedAt > 30000) root.reconnectAttempts = 0
+      if (root.reconnectAttempts < 1) {
+        root.reconnectAttempts++
+        root.playbackError = "Mistede " + title + " — prøver igen…"
+        reconnectTimer.slug = slug
+        reconnectTimer.restart()
+      } else {
+        root.playbackError = "Kunne ikke afspille " + title
+      }
     }
   }
 
-  Component.onCompleted: {
-    ensureStateDirProc.running = true
-    root.refreshIfStale()
+  Timer {
+    id: reconnectTimer
+    property string slug: ""
+    interval: 2000
+    onTriggered: if (slug) root.switchTo(slug, true)
   }
+
+  // The directory is fetched lazily: on first panel open, or when a play
+  // request needs it. Nothing contacts dr.dk just because the shell started.
+  Component.onCompleted: ensureStateDirProc.running = true
 
   KeyboardPanel {
     id: panel
@@ -305,8 +363,10 @@ Panel {
 
               Text {
                 textFormat: Text.PlainText
-                text: root.playingSlug ? ("Afspiller: " + root.playingTitle) : "Stoppet"
-                color: root.bar.foreground
+                text: root.playingSlug ? ("Afspiller: " + root.playingTitle)
+                    : root.pendingPlaySlug ? "Starter…"
+                    : (root.playbackError || "Stoppet")
+                color: root.playbackError && !root.playingSlug ? root.bar.urgent : root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
                 font.bold: true
@@ -412,7 +472,7 @@ Panel {
                   height: rowContent.implicitHeight + Style.space(10)
                   radius: Style.cornerRadius
                   color: modelData.slug === root.playingSlug
-                    ? Style.hoverFillFor(root.bar.foreground, Color.accent)
+                    ? Style.selectedFillFor(root.bar.foreground, Color.accent)
                     : (rowArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
 
                   Row {
@@ -427,7 +487,7 @@ Panel {
                       textFormat: Text.PlainText
                       text: channelRow.modelData.slug === root.playingSlug ? "▶" : "·"
                       color: channelRow.modelData.slug === root.playingSlug
-                        ? Style.hoverStateColor(root.bar.foreground, Color.accent)
+                        ? Style.selectedStateColor(root.bar.foreground, Color.accent)
                         : Qt.darker(root.bar.foreground, 1.5)
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.bodySmall
@@ -437,7 +497,7 @@ Panel {
                       textFormat: Text.PlainText
                       text: channelRow.modelData.title
                       color: channelRow.modelData.slug === root.playingSlug
-                        ? Style.hoverStateColor(root.bar.foreground, Color.accent)
+                        ? Style.selectedStateColor(root.bar.foreground, Color.accent)
                         : root.bar.foreground
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.body

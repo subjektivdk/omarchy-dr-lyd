@@ -66,6 +66,17 @@ function assetsBySlug(entry) {
   }
 }
 
+// DR titles a few channels by number only ("P6", "P8"); these are the names
+// they are actually known by. Anything not listed keeps DR's own title.
+var DISPLAY_NAMES = {
+  p6beat: "P6 Beat",
+  p8jazz: "P8 Jazz"
+}
+
+function displayTitle(entry) {
+  return DISPLAY_NAMES[entry.slug] || String(entry.title || entry.slug)
+}
+
 // Walks the whole __NEXT_DATA__ tree (channel entries can sit at the top
 // level or nested under a region's "districts" list) and returns a flat,
 // deduplicated list of radio channels.
@@ -84,7 +95,7 @@ function parseChannelsFromNextData(data) {
       var assets = assetsBySlug(node)
       out.push({
         slug: node.slug,
-        title: node.title,
+        title: displayTitle(node),
         hlsUrl: assets.hlsUrl,
         icyLowUrl: assets.icyLowUrl,
         icyHighUrl: assets.icyHighUrl
