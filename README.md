@@ -28,7 +28,7 @@ omarchy pkg add mpv mpv-mpris
 ## Installation
 
 ```bash
-omarchy plugin add https://github.com/<bruger>/omarchy-dr-lyd
+omarchy plugin add https://github.com/subjektivdk/omarchy-dr-lyd
 omarchy plugin enable dk.mtj.dr-lyd
 ```
 
