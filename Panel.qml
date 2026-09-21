@@ -7,8 +7,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "dk.mtj.dr-lyd"
-  ipcTarget: "dk.mtj.dr-lyd"
+  moduleName: "dr-lyd"
+  ipcTarget: "dr-lyd"
   manageIpc: false
 
   property var anchorItem: null

@@ -29,16 +29,16 @@ omarchy pkg add mpv mpv-mpris
 
 ```bash
 omarchy plugin add https://github.com/subjektivdk/omarchy-dr-lyd
-omarchy plugin enable dk.mtj.dr-lyd
+omarchy plugin enable dr-lyd
 ```
 
 Widgeten lægger sig i barens højre sektion. Flyt den med
-`omarchy bar move dk.mtj.dr-lyd --section <left|center|right>`.
+`omarchy bar move dr-lyd --section <left|center|right>`.
 
 ## Indstillinger
 
 Sættes i `~/.config/omarchy/shell.json` på widgetens entry, eller via
-`omarchy bar set dk.mtj.dr-lyd <key> <value>`:
+`omarchy bar set dr-lyd <key> <value>`:
 
 | Nøgle            | Standard | Beskrivelse                                                                 |
 |------------------|----------|-----------------------------------------------------------------------------|
