@@ -127,7 +127,7 @@ function streamUrlFor(channel, quality) {
 // already started is what's on air. Talk channels have no tracks at all,
 // and on mixed channels the host talks between songs, so a track that has
 // run past its duration plus some slack is not reported either.
-var NOW_PLAYING_GRACE_MS = 120000
+var NOW_PLAYING_GRACE_MS = 300000
 
 function parseNowPlayingFromHtml(html, nowMs) {
   var data = extractNextData(html)
@@ -170,6 +170,17 @@ function artistOf(point) {
 function nowPlayingText(track) {
   if (!track) return ""
   return track.artist ? track.artist + " – " + track.title : track.title
+}
+
+// How long ago the shown track should have ended — i.e. how stale it might
+// be, since DR hasn't logged anything newer. Empty while it's still
+// plausibly playing (or duration is unknown) so most tracks show no age at
+// all; only flagged once DR's log is at least a minute behind.
+function nowPlayingAgeText(track, nowMs) {
+  if (!track || !track.endsAt) return ""
+  var staleMs = nowMs - track.endsAt
+  if (staleMs < 60000) return ""
+  return "for " + Math.floor(staleMs / 60000) + " min. siden"
 }
 
 // Poll again just after the current track should end. With no track (or no

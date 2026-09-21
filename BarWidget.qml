@@ -45,6 +45,7 @@ BarWidget {
   readonly property bool playing: panelLoader.item ? panelLoader.item.playingSlug !== "" : false
   readonly property string playingTitle: panelLoader.item ? panelLoader.item.playingTitle : ""
   readonly property string nowPlayingText: panelLoader.item ? panelLoader.item.nowPlayingText : ""
+  readonly property string nowPlayingAgeText: panelLoader.item ? panelLoader.item.nowPlayingAgeText : ""
 
   // assets/dr-mark.png is an 88x35 white-on-transparent mask: DR's wordmark
   // condensed to the proportions DR uses for its own square favicon. The
@@ -78,7 +79,9 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     tooltipText: root.playing
-      ? root.playingTitle + (root.nowPlayingText ? "\n" + root.nowPlayingText : "")
+      ? root.playingTitle + (root.nowPlayingText
+          ? "\n" + root.nowPlayingText + (root.nowPlayingAgeText ? " (" + root.nowPlayingAgeText + ")" : "")
+          : "")
       : "DR Lyd — klik for kanaler"
 
     iconComponent: Component {

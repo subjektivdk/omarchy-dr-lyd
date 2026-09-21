@@ -167,10 +167,13 @@ Panel {
   }
 
   // A user- or open-triggered fetch gets a fresh retry budget. Retries go
-  // through startFetch() directly so they don't reset the counter.
+  // through startFetch() directly so they don't reset the counter. Also
+  // forces a fresh now-playing lookup, so the header button is one place
+  // to manually re-check everything.
   function refresh() {
     fetchRetries = 0
     startFetch()
+    root.refreshNowPlaying()
   }
 
   // Re-scrape once an hour at most; a manual refresh (button) always forces it.
@@ -350,6 +353,10 @@ Panel {
   // is sent once it exits.
   property var nowPlaying: null
   readonly property string nowPlayingText: Model.nowPlayingText(root.nowPlaying)
+  // Ticks while playing so the age shown on hover keeps advancing between
+  // polls, not just when a fetch lands.
+  property double nowClock: Date.now()
+  readonly property string nowPlayingAgeText: Model.nowPlayingAgeText(root.nowPlaying, root.nowClock)
   property int nowPlayingToken: 0
   property bool nowPlayingRefetch: false
 
@@ -359,6 +366,13 @@ Panel {
     root.nowPlayingRefetch = false
     nowPlayingTimer.stop()
     if (root.playingSlug) root.fetchNowPlaying()
+  }
+
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.playingSlug !== ""
+    onTriggered: root.nowClock = Date.now()
   }
 
   function fetchNowPlaying() {
@@ -373,6 +387,14 @@ Panel {
     nowPlayingProc.running = true
   }
 
+  // Manual re-check from the header button: jump the queue instead of
+  // waiting for the scheduled poll.
+  function refreshNowPlaying() {
+    if (!root.playingSlug) return
+    nowPlayingTimer.stop()
+    root.fetchNowPlaying()
+  }
+
   Process {
     id: nowPlayingProc
     property int token: -1
@@ -382,6 +404,7 @@ Panel {
         if (nowPlayingProc.token !== root.nowPlayingToken) return
         var raw = String(text || "")
         var now = Date.now()
+        root.nowClock = now
         if (raw === "") {
           // Network trouble, or a channel without a playlist page (LYD ekstra 404s).
           root.nowPlaying = null
@@ -465,26 +488,27 @@ Panel {
 
             Rectangle {
               id: refreshButton
+              readonly property bool busy: fetchProc.running || nowPlayingProc.running
               width: Style.space(26)
               height: Style.space(26)
               anchors.right: parent.right
               anchors.rightMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
               radius: Style.cornerRadius
-              color: refreshArea.containsMouse && !fetchProc.running
+              color: refreshArea.containsMouse && !busy
                 ? Style.hoverFillFor(root.bar.foreground, Color.accent)
                 : "transparent"
 
               Text {
                 anchors.centerIn: parent
                 textFormat: Text.PlainText
-                text: fetchProc.running ? "…" : "↻"
+                text: refreshButton.busy ? "…" : "↻"
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
 
                 RotationAnimator on rotation {
-                  running: fetchProc.running
+                  running: refreshButton.busy
                   from: 0; to: 360
                   duration: 800
                   loops: Animation.Infinite
@@ -495,7 +519,7 @@ Panel {
                 id: refreshArea
                 anchors.fill: parent
                 hoverEnabled: true
-                enabled: !fetchProc.running
+                enabled: !refreshButton.busy
                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onClicked: root.refresh()
               }
