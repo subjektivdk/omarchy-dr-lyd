@@ -32,9 +32,16 @@ function isRadioChannel(entry) {
 function hasIcyAsset(entry) {
   for (var i = 0; i < entry.audioAssets.length; i++) {
     var asset = entry.audioAssets[i]
-    if (asset && asset.format === "ICY" && asset.target === "Stream") return true
+    if (asset && asset.format === "ICY" && asset.target === "Stream" && isHttpUrl(asset.url)) return true
   }
   return false
+}
+
+// Stream URLs come from DR's page and end up as an mpv argument. Only
+// http(s) is ever expected; anything else (a path, or a string starting
+// with "--" that mpv would read as an option) is dropped here.
+function isHttpUrl(url) {
+  return /^https?:\/\/\S+$/i.test(String(url || ""))
 }
 
 function assetsBySlug(entry) {
@@ -43,7 +50,7 @@ function assetsBySlug(entry) {
   var icyHigh = null
   for (var i = 0; i < entry.audioAssets.length; i++) {
     var asset = entry.audioAssets[i]
-    if (!asset || asset.target !== "Stream") continue
+    if (!asset || asset.target !== "Stream" || !isHttpUrl(asset.url)) continue
     if (asset.format === "HLS" && !hlsUrl) {
       hlsUrl = asset.url
     } else if (asset.format === "ICY") {

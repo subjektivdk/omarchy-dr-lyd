@@ -122,7 +122,11 @@ Panel {
     onTriggered: root.flushState()
   }
 
-  // ---- Channel directory, scraped from dr.dk/lyd/<startChannel> ----
+  // ---- Channel directory ----
+  // Any dr.dk/lyd/<channel> page embeds the whole directory, so one fixed,
+  // known-good page is scraped rather than whatever channel is configured
+  // (a stale slug there would otherwise 404 and leave the list empty).
+  readonly property string directoryUrl: "https://www.dr.dk/lyd/p1"
   property var channels: []
   property var groupedChannels: Model.groupChannels(root.channels, root.favorites)
   property double lastFetched: 0
@@ -135,11 +139,17 @@ Panel {
     return null
   }
 
-  function refresh() {
+  function startFetch() {
     if (fetchProc.running) return
-    fetchRetries = 0
-    fetchProc.command = ["curl", "-fsSL", "--max-time", "10", "https://www.dr.dk/lyd/" + root.startChannel]
+    fetchProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000", root.directoryUrl]
     fetchProc.running = true
+  }
+
+  // A user- or open-triggered fetch gets a fresh retry budget. Retries go
+  // through startFetch() directly so they don't reset the counter.
+  function refresh() {
+    fetchRetries = 0
+    startFetch()
   }
 
   // Re-scrape once an hour at most; a manual refresh (button) always forces it.
@@ -155,25 +165,28 @@ Panel {
 
   Process {
     id: fetchProc
+    // Failure handling lives here alone: a failed curl (-f) closes stdout
+    // with nothing in it, so empty text covers both network errors and an
+    // empty body, and exit codes need no separate handler.
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var parsed = Model.parseChannelsFromHtml(text)
-        if (parsed && parsed.length > 0) {
-          root.channels = parsed
-          root.lastFetched = Date.now()
-          root.fetchError = ""
-          root.fetchRetries = 0
-        } else {
+        var raw = String(text || "")
+        if (raw === "") {
+          root.fetchError = "Kunne ikke hente dr.dk/lyd"
+          root.scheduleFetchRetry()
+          return
+        }
+        var parsed = Model.parseChannelsFromHtml(raw)
+        if (parsed.length === 0) {
           root.fetchError = "Kunne ikke finde kanaler på dr.dk"
           root.scheduleFetchRetry()
+          return
         }
-      }
-    }
-    onExited: function(exitCode) {
-      if (exitCode !== 0 && root.channels.length === 0) {
-        root.fetchError = "Kunne ikke hente dr.dk/lyd"
-        root.scheduleFetchRetry()
+        root.channels = parsed
+        root.lastFetched = Date.now()
+        root.fetchError = ""
+        root.fetchRetries = 0
       }
     }
   }
@@ -181,7 +194,7 @@ Panel {
   Timer {
     id: fetchRetryTimer
     interval: 3000
-    onTriggered: root.refresh()
+    onTriggered: root.startFetch()
   }
 
   // ---- Playback: shell out to mpv, one channel at a time ----
@@ -210,7 +223,7 @@ Panel {
     root.playingSlug = ""
     Qt.callLater(function() {
       if (token !== root.playToken) return
-      mpvProc.command = ["mpv", "--no-video", "--idle=no", "--really-quiet", "--force-media-title=DR " + channel.title, url]
+      mpvProc.command = ["mpv", "--no-video", "--idle=no", "--really-quiet", "--force-media-title=DR " + channel.title, "--", url]
       mpvProc.running = true
       root.mpvRunToken = token
       root.playingSlug = slug

@@ -29,7 +29,7 @@
         "type": "string",
         "label": "Standardkanal (slug)",
         "defaultValue": "p6beat",
-        "description": "Kanal-slug fra dr.dk/lyd/<slug>, fx p1, p2, p3, p6beat, p8jazz. Bruges også som startpunkt for at hente hele kanallisten."
+        "description": "Kanal-slug fra dr.dk/lyd/<slug>, fx p1, p2, p3, p6beat, p8jazz. Bruges til midterklik indtil en kanal er blevet afspillet."
       },
       {
         "key": "quality",

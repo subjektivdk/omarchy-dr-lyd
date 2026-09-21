@@ -50,7 +50,7 @@ Favoritter og sidst afspillede kanal gemmes i
 
 ## Sådan virker det
 
-Pluginnet henter `https://www.dr.dk/lyd/<kanal>` og læser kanalkataloget ud af
+Pluginnet henter `https://www.dr.dk/lyd/p1` og læser kanalkataloget ud af
 sidens indlejrede `__NEXT_DATA__`-JSON (ét kald giver alle kanaler med deres
 HLS- og ICY/MP3-stream-URL'er). DR udstiller ikke en dokumenteret offentlig API
 til dette, så ændrer DR deres frontend, kan parsingen holde op med at virke —
