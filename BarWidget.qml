@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import Quickshell
 import qs.Commons
 import qs.Ui
 
@@ -22,6 +23,13 @@ BarWidget {
 
   function toggleDefaultChannel() {
     if (panelLoader.item && panelLoader.item.toggleDefaultChannel) panelLoader.item.toggleDefaultChannel()
+  }
+
+  // Right-click: copy "Kunstner – Titel" to the clipboard, same pattern
+  // (Util.shellQuote piped to wl-copy) as the network panel's copy button.
+  function copyNowPlayingToClipboard() {
+    if (!root.nowPlayingText) return
+    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(root.nowPlayingText) + " | wl-copy"])
   }
 
   // Shape contract for shell.summon/hide/toggle routing (Bar.findPanelWidget
@@ -117,6 +125,7 @@ BarWidget {
 
     onPressed: function(b) {
       if (b === Qt.MiddleButton) root.toggleDefaultChannel()
+      else if (b === Qt.RightButton && root.nowPlayingText) root.copyNowPlayingToClipboard()
       else root.togglePanel()
     }
   }

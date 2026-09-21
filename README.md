@@ -15,6 +15,8 @@ regionale P4/P5-kanaler) direkte fra Omarchy-baren.
   egen log mere end et minut, vises alderen ved siden af (fx "for 4 min.
   siden") — det er en advarsel om at nummeret kan være forældet, ikke en
   fejl i pluginet
+- Højreklik på ikonet kopierer "Kunstner – Titel" til udklipsholderen
+  (kun aktivt når der er et spiller nu-nummer)
 - Afspilning via `mpv`; med `mpv-mpris` installeret dukker kanalen op i
   Omarchys Media-widget og kan styres med medietaster
 - Ikonet følger barens tema (monokromt, farves med barens forgrundsfarve)
