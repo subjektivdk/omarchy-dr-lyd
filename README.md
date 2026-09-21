@@ -10,7 +10,8 @@ regionale P4/P5-kanaler) direkte fra Omarchy-baren.
 - Klik på en kanal for at afspille, klik igen for at stoppe
 - Hjerte-knap på hver kanal markerer den som favorit (vises øverst)
 - Midterklik på ikonet starter/stopper den sidst afspillede kanal
-- Hover over ikonet viser hvad der spiller
+- Hover over ikonet viser kanalen og det nummer, der spiller lige nu
+  (kunstner – titel; tale-kanaler som P1 viser kun kanalen)
 - Afspilning via `mpv`; med `mpv-mpris` installeret dukker kanalen op i
   Omarchys Media-widget og kan styres med medietaster
 - Ikonet følger barens tema (monokromt, farves med barens forgrundsfarve)
@@ -55,6 +56,12 @@ sidens indlejrede `__NEXT_DATA__`-JSON (ét kald giver alle kanaler med deres
 HLS- og ICY/MP3-stream-URL'er). DR udstiller ikke en dokumenteret offentlig API
 til dette, så ændrer DR deres frontend, kan parsingen holde op med at virke —
 panelet viser i så fald en fejl og prøver igen.
+
+"Spiller nu" kommer fra `https://www.dr.dk/lyd/playlister/<slug>` på samme
+måde (`playlistIndexPoints` i sidens JSON). Den hentes kun mens en kanal
+afspilles, og næste opslag times til når nummeret forventes at slutte
+(mindst 15 sek. mellem opslag). Går opslaget galt, eller har kanalen ingen
+playliste (LYD ekstra), vises bare kanalnavnet.
 
 ## Udvikling
 

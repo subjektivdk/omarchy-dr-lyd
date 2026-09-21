@@ -122,6 +122,65 @@ function streamUrlFor(channel, quality) {
   return channel.icyHighUrl || channel.icyLowUrl || channel.hlsUrl || ""
 }
 
+// dr.dk/lyd/playlister/<slug> embeds the channel's recent tracks the same
+// way (props.pageProps.playlistIndexPoints). The newest "Track" that has
+// already started is what's on air. Talk channels have no tracks at all,
+// and on mixed channels the host talks between songs, so a track that has
+// run past its duration plus some slack is not reported either.
+var NOW_PLAYING_GRACE_MS = 120000
+
+function parseNowPlayingFromHtml(html, nowMs) {
+  var data = extractNextData(html)
+  var props = data && data.props && data.props.pageProps
+  var points = props && props.playlistIndexPoints
+  if (!Array.isArray(points)) return null
+
+  var latest = null
+  for (var i = 0; i < points.length; i++) {
+    var point = points[i]
+    if (!point || point.type !== "Track" || !point.title) continue
+    var startedAt = Date.parse(point.playedTime)
+    if (isNaN(startedAt) || startedAt > nowMs) continue
+    if (!latest || startedAt > latest.startedAt) {
+      var duration = Number(point.durationMilliseconds) || 0
+      latest = {
+        title: String(point.title),
+        artist: artistOf(point),
+        startedAt: startedAt,
+        endsAt: duration > 0 ? startedAt + duration : 0
+      }
+    }
+  }
+  if (latest && latest.endsAt && nowMs > latest.endsAt + NOW_PLAYING_GRACE_MS) return null
+  return latest
+}
+
+// DR's `description` is the artist line as they present it ("A og B");
+// the roles list is the structured fallback.
+function artistOf(point) {
+  var description = String(point.description || "").trim()
+  if (description) return description
+  var names = []
+  var roles = Array.isArray(point.roles) ? point.roles : []
+  for (var i = 0; i < roles.length; i++)
+    if (roles[i] && roles[i].name) names.push(String(roles[i].name))
+  return names.join(", ")
+}
+
+function nowPlayingText(track) {
+  if (!track) return ""
+  return track.artist ? track.artist + " – " + track.title : track.title
+}
+
+// Poll again just after the current track should end. With no track (or no
+// usable duration) check back regularly. Bounded so a bogus duration can
+// neither hammer dr.dk nor go quiet for the rest of the show.
+function nowPlayingPollDelay(track, nowMs) {
+  var delay = 60000
+  if (track && track.endsAt) delay = track.endsAt - nowMs + 5000
+  return Math.min(Math.max(delay, 15000), 300000)
+}
+
 function regionOf(slug) {
   if (/^p4/i.test(slug)) return "p4"
   if (/^p5/i.test(slug)) return "p5"

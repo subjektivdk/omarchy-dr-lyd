@@ -228,14 +228,20 @@ Panel {
   readonly property var playingChannel: root.playingSlug ? root.channelBySlug(root.playingSlug) : null
   readonly property string playingTitle: playingChannel ? playingChannel.title : ""
 
-  // Killing the previous mpv and spawning the next one are both async: the
-  // old process's exited() can arrive after the new one is already running.
-  // playToken identifies each switch/stop attempt; mpvRunToken records which
-  // attempt the currently-live mpvProc belongs to. onExited only clears
-  // playingSlug when they still match, so a stale exit from an already
-  // superseded process can't wipe out a newer, still-playing channel.
+  // playToken identifies each switch/stop attempt so a deferred start from
+  // an older attempt is dropped.
   property int playToken: 0
-  property int mpvRunToken: -1
+  // Setting running=false only asks mpv to quit: `running` stays true and
+  // exited() fires later — after a replacement start has been requested, in
+  // which case Quickshell launches the replacement right after. Every kill
+  // we ask for is counted here so onExited can tell those exits from a
+  // stream that actually died.
+  property int mpvKillsPending: 0
+
+  function killMpv() {
+    if (mpvProc.running) root.mpvKillsPending++
+    mpvProc.running = false
+  }
 
   // A play request made before the directory has loaded (middle-click right
   // after shell start) waits here and is honoured when the fetch lands.
@@ -272,13 +278,12 @@ Panel {
 
     root.playToken++
     var token = root.playToken
-    mpvProc.running = false
+    root.killMpv()
     root.playingSlug = ""
     Qt.callLater(function() {
       if (token !== root.playToken) return
       mpvProc.command = ["mpv", "--no-video", "--idle=no", "--really-quiet", "--force-media-title=DR " + channel.title, "--", url]
       mpvProc.running = true
-      root.mpvRunToken = token
       root.mpvStartedAt = Date.now()
       root.playbackError = ""
       root.playingSlug = slug
@@ -293,7 +298,7 @@ Panel {
     root.playbackError = ""
     root.reconnectAttempts = 0
     reconnectTimer.stop()
-    mpvProc.running = false
+    root.killMpv()
     root.playingSlug = ""
   }
 
@@ -309,8 +314,10 @@ Panel {
   Process {
     id: mpvProc
     onExited: function(exitCode) {
-      // Only react if no newer switch/stop has superseded this process.
-      if (root.mpvRunToken !== root.playToken) return
+      if (root.mpvKillsPending > 0) {
+        root.mpvKillsPending--
+        return
+      }
 
       var slug = root.playingSlug
       var title = root.playingTitle
@@ -334,6 +341,68 @@ Panel {
     property string slug: ""
     interval: 2000
     onTriggered: if (slug) root.switchTo(slug, true)
+  }
+
+  // ---- Now playing: the track the channel is airing ----
+  // Polled only while a channel plays; each result schedules the next poll
+  // for when the track should end. A pending request is never killed: its
+  // result is discarded by token, and a request that arrived while it ran
+  // is sent once it exits.
+  property var nowPlaying: null
+  readonly property string nowPlayingText: Model.nowPlayingText(root.nowPlaying)
+  property int nowPlayingToken: 0
+  property bool nowPlayingRefetch: false
+
+  onPlayingSlugChanged: {
+    root.nowPlayingToken++
+    root.nowPlaying = null
+    root.nowPlayingRefetch = false
+    nowPlayingTimer.stop()
+    if (root.playingSlug) root.fetchNowPlaying()
+  }
+
+  function fetchNowPlaying() {
+    if (!root.playingSlug) return
+    if (nowPlayingProc.running) {
+      root.nowPlayingRefetch = true
+      return
+    }
+    nowPlayingProc.token = root.nowPlayingToken
+    nowPlayingProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000",
+                              "https://www.dr.dk/lyd/playlister/" + root.playingSlug]
+    nowPlayingProc.running = true
+  }
+
+  Process {
+    id: nowPlayingProc
+    property int token: -1
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (nowPlayingProc.token !== root.nowPlayingToken) return
+        var raw = String(text || "")
+        var now = Date.now()
+        if (raw === "") {
+          // Network trouble, or a channel without a playlist page (LYD ekstra 404s).
+          root.nowPlaying = null
+          nowPlayingTimer.interval = 300000
+        } else {
+          root.nowPlaying = Model.parseNowPlayingFromHtml(raw, now)
+          nowPlayingTimer.interval = Model.nowPlayingPollDelay(root.nowPlaying, now)
+        }
+        nowPlayingTimer.restart()
+      }
+    }
+    onExited: {
+      if (!root.nowPlayingRefetch) return
+      root.nowPlayingRefetch = false
+      Qt.callLater(root.fetchNowPlaying)
+    }
+  }
+
+  Timer {
+    id: nowPlayingTimer
+    onTriggered: root.fetchNowPlaying()
   }
 
   // The directory is fetched lazily: on first panel open, or when a play
