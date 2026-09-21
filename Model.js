@@ -162,26 +162,35 @@ function groupChannels(channels, favoriteSlugs) {
   p4.sort(byTitle)
   p5.sort(byTitle)
 
+  // `key` is the stable id the panel remembers collapse state under; the
+  // ten-channel regional families start collapsed so favorites and the
+  // nationwide channels fit without scrolling.
   var groups = []
-  if (favorites.length) groups.push({ label: "Favoritter", items: favorites })
-  if (national.length) groups.push({ label: "Landsdækkende", items: national })
-  if (p4.length) groups.push({ label: "P4 regional", items: p4 })
-  if (p5.length) groups.push({ label: "P5 regional", items: p5 })
+  if (favorites.length) groups.push({ key: "favorites", label: "Favoritter", items: favorites, defaultCollapsed: false })
+  if (national.length) groups.push({ key: "national", label: "Landsdækkende", items: national, defaultCollapsed: false })
+  if (p4.length) groups.push({ key: "p4", label: "P4 regional", items: p4, defaultCollapsed: true })
+  if (p5.length) groups.push({ key: "p5", label: "P5 regional", items: p5, defaultCollapsed: true })
   return groups
 }
 
-// Parses the plugin's persisted state file (favorites + last played
-// channel). Missing/corrupt state is treated as "nothing saved yet".
+// Parses the plugin's persisted state file (favorites, last played channel,
+// which groups the user has expanded/collapsed). Missing/corrupt state is
+// treated as "nothing saved yet".
 function parseStateFile(raw) {
   var favorites = []
   var lastPlayed = ""
+  var groups = {}
   try {
     var parsed = JSON.parse(String(raw || ""))
     if (parsed && Array.isArray(parsed.favorites))
       favorites = parsed.favorites.filter(function(s) { return typeof s === "string" && s })
     if (parsed && typeof parsed.lastPlayed === "string") lastPlayed = parsed.lastPlayed
+    if (parsed && parsed.groups && typeof parsed.groups === "object" && !Array.isArray(parsed.groups)) {
+      for (var key in parsed.groups)
+        if (typeof parsed.groups[key] === "boolean") groups[key] = parsed.groups[key]
+    }
   } catch (e) {
     // First run or corrupt file: fall back to empty state.
   }
-  return { favorites: favorites, lastPlayed: lastPlayed }
+  return { favorites: favorites, lastPlayed: lastPlayed, groups: groups }
 }

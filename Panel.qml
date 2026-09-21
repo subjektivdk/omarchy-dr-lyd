@@ -61,6 +61,9 @@ Panel {
   readonly property string statePath: root.stateDir + "dr-lyd.json"
   property var favorites: []
   property string lastPlayed: ""
+  // group key -> expanded; a key that is absent falls back to the group's
+  // default (regional families collapsed, the rest expanded).
+  property var groupState: ({})
   property bool stateLoaded: false
   // What "start playing"/middle-click resolves to: the last channel that
   // was actually played, falling back to the configured default until
@@ -80,6 +83,19 @@ Panel {
     root.scheduleStateSave()
   }
 
+  function isGroupExpanded(group) {
+    var stored = root.groupState[group.key]
+    return stored === undefined ? !group.defaultCollapsed : stored
+  }
+
+  function toggleGroup(group) {
+    var next = {}
+    for (var key in root.groupState) next[key] = root.groupState[key]
+    next[group.key] = !root.isGroupExpanded(group)
+    root.groupState = next
+    root.scheduleStateSave()
+  }
+
   function loadState(raw) {
     // FileView can fire onLoaded more than once during startup; only the
     // first read should seed state, or a later reload could stomp a
@@ -88,6 +104,7 @@ Panel {
     var parsed = Model.parseStateFile(raw)
     root.favorites = parsed.favorites
     root.lastPlayed = parsed.lastPlayed
+    root.groupState = parsed.groups
     root.stateLoaded = true
   }
 
@@ -97,7 +114,11 @@ Panel {
   }
 
   function flushState() {
-    stateFile.setText(JSON.stringify({ favorites: root.favorites, lastPlayed: root.lastPlayed }, null, 2) + "\n")
+    stateFile.setText(JSON.stringify({
+      favorites: root.favorites,
+      lastPlayed: root.lastPlayed,
+      groups: root.groupState
+    }, null, 2) + "\n")
   }
 
   Process {
@@ -448,22 +469,57 @@ Panel {
             model: root.groupedChannels
 
             Column {
+              id: groupColumn
               required property var modelData
+              readonly property bool expanded: root.isGroupExpanded(modelData)
               width: parent.width
               spacing: Style.space(2)
 
-              Text {
-                x: Style.space(16)
-                textFormat: Text.PlainText
-                text: modelData.label.toUpperCase()
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.letterSpacing: 1
+              // Clickable heading: chevron + label, plus the channel count
+              // while collapsed so it's clear something is hidden.
+              Rectangle {
+                width: parent.width
+                height: groupHeader.implicitHeight + Style.space(8)
+                radius: Style.cornerRadius
+                color: groupHeaderArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+
+                Row {
+                  id: groupHeader
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(16)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(6)
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: groupColumn.expanded ? "▾" : "▸"
+                    color: Qt.darker(root.bar.foreground, 1.5)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: groupColumn.modelData.label.toUpperCase()
+                      + (groupColumn.expanded ? "" : " (" + groupColumn.modelData.items.length + ")")
+                    color: Qt.darker(root.bar.foreground, 1.5)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.letterSpacing: 1
+                  }
+                }
+
+                MouseArea {
+                  id: groupHeaderArea
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleGroup(groupColumn.modelData)
+                }
               }
 
               Repeater {
-                model: modelData.items
+                model: groupColumn.expanded ? groupColumn.modelData.items : []
 
                 Rectangle {
                   id: channelRow
