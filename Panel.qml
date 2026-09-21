@@ -1,0 +1,480 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import qs.Ui
+import "Model.js" as Model
+
+Panel {
+  id: root
+  moduleName: "dk.mtj.dr-lyd"
+  ipcTarget: "dk.mtj.dr-lyd"
+  manageIpc: false
+
+  property var anchorItem: null
+  property var hostWidget: null
+  readonly property var barIdentity: hostWidget || root
+
+  function open() {
+    setCenterHoverRevealSuppressed(false)
+    root.controller.show()
+    root.refreshIfStale()
+  }
+
+  function openFromHotkey() {
+    root.controller.show()
+    root.refreshIfStale()
+    Qt.callLater(function() {
+      if (root.opened) setCenterHoverRevealSuppressed(true)
+    })
+  }
+
+  function close() {
+    setCenterHoverRevealSuppressed(false)
+    root.controller.hide()
+  }
+
+  function toggle() {
+    if (root.opened) root.close()
+    else root.openFromHotkey()
+  }
+
+  function switchPanel(direction) {
+    if (root.bar && typeof root.bar.switchPanelFrom === "function")
+      return root.bar.switchPanelFrom(root.barIdentity, direction)
+    return false
+  }
+
+  function setCenterHoverRevealSuppressed(value) {
+    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+      root.bar.setCenterHoverRevealSuppressed(value)
+    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+      root.bar.centerHoverRevealSuppressed = value
+  }
+
+  // ---- Settings (manifest-backed: defaultChannel, quality) ----
+  readonly property string defaultChannel: String(root.setting("defaultChannel", "p6beat"))
+  readonly property string quality: String(root.setting("quality", "High"))
+
+  // ---- Persisted state: favorites + last played channel ----
+  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/settings/"
+  readonly property string statePath: root.stateDir + "dr-lyd.json"
+  property var favorites: []
+  property string lastPlayed: ""
+  property bool stateLoaded: false
+  // What "start playing"/middle-click resolves to: the last channel that
+  // was actually played, falling back to the configured default until
+  // anything has ever been played.
+  readonly property string startChannel: root.lastPlayed || root.defaultChannel
+
+  function isFavorite(slug) {
+    return root.favorites.indexOf(slug) !== -1
+  }
+
+  function toggleFavorite(slug) {
+    var idx = root.favorites.indexOf(slug)
+    var next = root.favorites.slice()
+    if (idx === -1) next.push(slug)
+    else next.splice(idx, 1)
+    root.favorites = next
+    root.scheduleStateSave()
+  }
+
+  function loadState(raw) {
+    // FileView can fire onLoaded more than once during startup; only the
+    // first read should seed state, or a later reload could stomp a
+    // just-made change with stale disk content.
+    if (root.stateLoaded) return
+    var parsed = Model.parseStateFile(raw)
+    root.favorites = parsed.favorites
+    root.lastPlayed = parsed.lastPlayed
+    root.stateLoaded = true
+  }
+
+  function scheduleStateSave() {
+    if (!root.stateLoaded) return
+    stateSaveTimer.restart()
+  }
+
+  function flushState() {
+    stateFile.setText(JSON.stringify({ favorites: root.favorites, lastPlayed: root.lastPlayed }, null, 2) + "\n")
+  }
+
+  Process {
+    id: ensureStateDirProc
+    command: ["mkdir", "-p", root.stateDir]
+  }
+
+  FileView {
+    id: stateFile
+    path: root.statePath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadState(text())
+    onLoadFailed: root.loadState("")
+  }
+
+  Timer {
+    id: stateSaveTimer
+    interval: 200
+    repeat: false
+    onTriggered: root.flushState()
+  }
+
+  // ---- Channel directory, scraped from dr.dk/lyd/<startChannel> ----
+  property var channels: []
+  property var groupedChannels: Model.groupChannels(root.channels, root.favorites)
+  property double lastFetched: 0
+  property string fetchError: ""
+  property int fetchRetries: 0
+
+  function channelBySlug(slug) {
+    for (var i = 0; i < root.channels.length; i++)
+      if (root.channels[i].slug === slug) return root.channels[i]
+    return null
+  }
+
+  function refresh() {
+    if (fetchProc.running) return
+    fetchRetries = 0
+    fetchProc.command = ["curl", "-fsSL", "--max-time", "10", "https://www.dr.dk/lyd/" + root.startChannel]
+    fetchProc.running = true
+  }
+
+  // Re-scrape once an hour at most; a manual refresh (button) always forces it.
+  function refreshIfStale() {
+    if (root.channels.length === 0 || (Date.now() - root.lastFetched) > 3600000) root.refresh()
+  }
+
+  function scheduleFetchRetry() {
+    if (fetchRetries >= 3) return
+    fetchRetries++
+    fetchRetryTimer.restart()
+  }
+
+  Process {
+    id: fetchProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var parsed = Model.parseChannelsFromHtml(text)
+        if (parsed && parsed.length > 0) {
+          root.channels = parsed
+          root.lastFetched = Date.now()
+          root.fetchError = ""
+          root.fetchRetries = 0
+        } else {
+          root.fetchError = "Kunne ikke finde kanaler på dr.dk"
+          root.scheduleFetchRetry()
+        }
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && root.channels.length === 0) {
+        root.fetchError = "Kunne ikke hente dr.dk/lyd"
+        root.scheduleFetchRetry()
+      }
+    }
+  }
+
+  Timer {
+    id: fetchRetryTimer
+    interval: 3000
+    onTriggered: root.refresh()
+  }
+
+  // ---- Playback: shell out to mpv, one channel at a time ----
+  property string playingSlug: ""
+  readonly property var playingChannel: root.playingSlug ? root.channelBySlug(root.playingSlug) : null
+  readonly property string playingTitle: playingChannel ? playingChannel.title : ""
+
+  // Killing the previous mpv and spawning the next one are both async: the
+  // old process's exited() can arrive after the new one is already running.
+  // playToken identifies each switch/stop attempt; mpvRunToken records which
+  // attempt the currently-live mpvProc belongs to. onExited only clears
+  // playingSlug when they still match, so a stale exit from an already
+  // superseded process can't wipe out a newer, still-playing channel.
+  property int playToken: 0
+  property int mpvRunToken: -1
+
+  function switchTo(slug) {
+    var channel = root.channelBySlug(slug)
+    if (!channel) return
+    var url = Model.streamUrlFor(channel, root.quality)
+    if (!url) return
+
+    root.playToken++
+    var token = root.playToken
+    mpvProc.running = false
+    root.playingSlug = ""
+    Qt.callLater(function() {
+      if (token !== root.playToken) return
+      mpvProc.command = ["mpv", "--no-video", "--idle=no", "--really-quiet", "--force-media-title=DR " + channel.title, url]
+      mpvProc.running = true
+      root.mpvRunToken = token
+      root.playingSlug = slug
+      root.lastPlayed = slug
+      root.scheduleStateSave()
+    })
+  }
+
+  function stop() {
+    root.playToken++
+    mpvProc.running = false
+    root.playingSlug = ""
+  }
+
+  function togglePlay(slug) {
+    if (root.playingSlug === slug) root.stop()
+    else root.switchTo(slug)
+  }
+
+  function toggleDefaultChannel() {
+    root.togglePlay(root.startChannel)
+  }
+
+  Process {
+    id: mpvProc
+    onExited: function(exitCode) {
+      // mpv died (network drop, stream ended, etc.) without us stopping it —
+      // but only clear state if no newer switch/stop has since superseded it.
+      if (root.mpvRunToken === root.playToken) root.playingSlug = ""
+    }
+  }
+
+  Component.onCompleted: {
+    ensureStateDirProc.running = true
+    root.refreshIfStale()
+  }
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: root.anchorItem
+    owner: root.barIdentity
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(320))
+    contentHeight: panel.fittedContentHeight(channelColumn.implicitHeight)
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
+
+      Flickable {
+        id: channelScroll
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: channelColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+
+        Column {
+          id: channelColumn
+          width: channelScroll.width
+          spacing: Style.space(10)
+
+          // ---- Header: status + refresh ----
+          Item {
+            width: parent.width
+            height: headerRow.implicitHeight + Style.space(12)
+
+            Row {
+              id: headerRow
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(16)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(8)
+
+              Text {
+                textFormat: Text.PlainText
+                text: root.playingSlug ? ("Afspiller: " + root.playingTitle) : "Stoppet"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+            }
+
+            Rectangle {
+              id: refreshButton
+              width: Style.space(26)
+              height: Style.space(26)
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(12)
+              anchors.verticalCenter: parent.verticalCenter
+              radius: Style.cornerRadius
+              color: refreshArea.containsMouse && !fetchProc.running
+                ? Style.hoverFillFor(root.bar.foreground, Color.accent)
+                : "transparent"
+
+              Text {
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: fetchProc.running ? "…" : "↻"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+
+                RotationAnimator on rotation {
+                  running: fetchProc.running
+                  from: 0; to: 360
+                  duration: 800
+                  loops: Animation.Infinite
+                }
+              }
+
+              MouseArea {
+                id: refreshArea
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: !fetchProc.running
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: root.refresh()
+              }
+            }
+          }
+
+          Rectangle {
+            width: parent.width
+            height: Style.spacing.hairline
+            color: root.bar.foreground
+            opacity: 0.12
+          }
+
+          Text {
+            visible: root.fetchError !== "" && root.channels.length === 0
+            x: Style.space(16)
+            width: parent.width - Style.space(32)
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.fetchError
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.italic: true
+          }
+
+          Text {
+            visible: root.channels.length === 0 && root.fetchError === ""
+            x: Style.space(16)
+            textFormat: Text.PlainText
+            text: "Henter kanaler…"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.italic: true
+          }
+
+          // ---- Grouped channel list ----
+          Repeater {
+            model: root.groupedChannels
+
+            Column {
+              required property var modelData
+              width: parent.width
+              spacing: Style.space(2)
+
+              Text {
+                x: Style.space(16)
+                textFormat: Text.PlainText
+                text: modelData.label.toUpperCase()
+                color: Qt.darker(root.bar.foreground, 1.5)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1
+              }
+
+              Repeater {
+                model: modelData.items
+
+                Rectangle {
+                  id: channelRow
+                  required property var modelData
+                  width: parent.width
+                  height: rowContent.implicitHeight + Style.space(10)
+                  radius: Style.cornerRadius
+                  color: modelData.slug === root.playingSlug
+                    ? Style.hoverFillFor(root.bar.foreground, Color.accent)
+                    : (rowArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
+
+                  Row {
+                    id: rowContent
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(16)
+                    anchors.right: favoriteButton.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(8)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      text: channelRow.modelData.slug === root.playingSlug ? "▶" : "·"
+                      color: channelRow.modelData.slug === root.playingSlug
+                        ? Style.hoverStateColor(root.bar.foreground, Color.accent)
+                        : Qt.darker(root.bar.foreground, 1.5)
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      text: channelRow.modelData.title
+                      color: channelRow.modelData.slug === root.playingSlug
+                        ? Style.hoverStateColor(root.bar.foreground, Color.accent)
+                        : root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                  }
+
+                  MouseArea {
+                    id: rowArea
+                    anchors.left: parent.left
+                    anchors.right: favoriteButton.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.togglePlay(channelRow.modelData.slug)
+                  }
+
+                  Rectangle {
+                    id: favoriteButton
+                    width: Style.space(26)
+                    height: Style.space(26)
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: Style.cornerRadius
+                    color: favoriteArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+
+                    Text {
+                      anchors.centerIn: parent
+                      textFormat: Text.PlainText
+                      text: root.isFavorite(channelRow.modelData.slug) ? "♥" : "♡"
+                      color: root.isFavorite(channelRow.modelData.slug) ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+
+                    MouseArea {
+                      id: favoriteArea
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.toggleFavorite(channelRow.modelData.slug)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
