@@ -5,7 +5,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "dr-lyd"
+  moduleName: "subjektivdk.dr-lyd"
 
   function injectPanel() {
     var target = panelLoader.item

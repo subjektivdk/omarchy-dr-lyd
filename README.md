@@ -29,16 +29,16 @@ omarchy pkg add mpv mpv-mpris
 
 ```bash
 omarchy plugin add https://github.com/subjektivdk/omarchy-dr-lyd
-omarchy plugin enable dr-lyd
+omarchy plugin enable subjektivdk.dr-lyd
 ```
 
 Widgeten lægger sig i barens højre sektion. Flyt den med
-`omarchy bar move dr-lyd --section <left|center|right>`.
+`omarchy bar move subjektivdk.dr-lyd --section <left|center|right>`.
 
 ## Indstillinger
 
 Sættes i `~/.config/omarchy/shell.json` på widgetens entry, eller via
-`omarchy bar set dr-lyd <key> <value>`:
+`omarchy bar set subjektivdk.dr-lyd <key> <value>`:
 
 | Nøgle            | Standard | Beskrivelse                                                                 |
 |------------------|----------|-----------------------------------------------------------------------------|
@@ -59,7 +59,7 @@ panelet viser i så fald en fejl og prøver igen.
 ## Udvikling
 
 ```bash
-omarchy plugin validate ~/.config/omarchy/plugins/dr-lyd
+omarchy plugin validate ~/.config/omarchy/plugins/subjektivdk.dr-lyd
 omarchy restart shell   # QML-ændringer i bar-widgets kræver en genstart
 ```
 
