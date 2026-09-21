@@ -45,12 +45,15 @@ BarWidget {
   readonly property bool playing: panelLoader.item ? panelLoader.item.playingSlug !== "" : false
   readonly property string playingTitle: panelLoader.item ? panelLoader.item.playingTitle : ""
 
-  // assets/dr-mark.png is a 150x35 white-on-transparent mask cut from DR's
-  // logo. Its height tracks the bar's icon font (a bar token, so it scales
-  // with the font scale and theme overrides like every other bar icon); 0.8
-  // of that is roughly the ink height of the neighbouring glyph icons.
-  readonly property real markHeight: Style.bar.iconFont * 0.8
-  readonly property real markWidth: markHeight * (150 / 35)
+  // assets/dr-mark.png is an 88x35 white-on-transparent mask: DR's wordmark
+  // condensed to the proportions DR uses for its own square favicon. The
+  // widget keeps the standard icon slot width; the mark spans that slot
+  // minus a small side margin (wider than the 16px glyph canvas, or two
+  // letters would be unreadable) and its height follows from the aspect.
+  // Everything derives from bar tokens, so it scales with the font scale
+  // and theme overrides like every other bar icon.
+  readonly property real markWidth: Style.bar.iconSlot - Style.space(6)
+  readonly property real markHeight: markWidth * (35 / 88)
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -73,9 +76,6 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // The wordmark is wider than the square icon canvas, so widen the slot
-    // to fit it with the same side padding BarIconButton gives a glyph.
-    slotSize: root.markWidth + (Style.bar.iconSlot - Style.bar.iconCanvas)
     tooltipText: root.playing ? ("Afspiller " + root.playingTitle + " — klik for kanaler") : "DR Lyd — klik for kanaler"
 
     iconComponent: Component {
