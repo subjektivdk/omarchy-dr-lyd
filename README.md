@@ -72,6 +72,21 @@ galt, eller har kanalen ingen playliste (LYD ekstra), vises bare
 kanalnavnet. ↻-knappen i panelets header genopfrisker både kanallisten og
 spiller nu-opslaget med det samme, uden at vente på det planlagte poll.
 
+## Fjernstyring
+
+Pluginnet kan styres udefra via Omarchy shell'ens IPC, uden at åbne panelet:
+
+```bash
+omarchy-shell subjektivdk.dr-lyd list           # slug<TAB>titel for alle kendte kanaler
+omarchy-shell subjektivdk.dr-lyd play <slug>     # skift til en kanal, fx p1, p3, p6beat
+omarchy-shell subjektivdk.dr-lyd stop            # stop afspilning
+omarchy-shell subjektivdk.dr-lyd status          # slug<TAB>titel for det der spiller, eller "stopped"
+```
+
+`play` af et ukendt slug returnerer `unknown channel: <slug>`. Er kanallisten
+ikke hentet endnu, returnerer `list`/`play` `loading channel directory, retry
+shortly` — prøv igen om et par sekunder.
+
 ## Udvikling
 
 ```bash
