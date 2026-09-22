@@ -314,6 +314,43 @@ Panel {
     root.togglePlay(root.startChannel)
   }
 
+  // External control (e.g. `omarchy-shell subjektivdk.dr-lyd play p1`), for
+  // scripts/agents that want to switch channel without touching the panel.
+  // Deliberately separate from the base Panel's open/close/toggle IPC
+  // (manageIpc: false above), since this target is about playback, not the
+  // panel's visibility.
+  IpcHandler {
+    target: "subjektivdk.dr-lyd"
+    function play(slug: string): string {
+      if (root.channelBySlug(slug)) {
+        root.switchTo(slug)
+        return "ok"
+      }
+      if (root.channels.length === 0) {
+        root.switchTo(slug)
+        return "loading channel directory, retry shortly"
+      }
+      return "unknown channel: " + slug
+    }
+    function stop(): string {
+      root.stop()
+      return "ok"
+    }
+    function status(): string {
+      return root.playingSlug ? root.playingSlug + "\t" + root.playingTitle : "stopped"
+    }
+    function list(): string {
+      if (root.channels.length === 0) {
+        root.refreshIfStale()
+        return "loading channel directory, retry shortly"
+      }
+      var lines = []
+      for (var i = 0; i < root.channels.length; i++)
+        lines.push(root.channels[i].slug + "\t" + root.channels[i].title)
+      return lines.join("\n")
+    }
+  }
+
   Process {
     id: mpvProc
     onExited: function(exitCode) {
