@@ -25,7 +25,7 @@ BarWidget {
     if (panelLoader.item && panelLoader.item.toggleDefaultChannel) panelLoader.item.toggleDefaultChannel()
   }
 
-  // Right-click: copy "Kunstner – Titel" to the clipboard, same pattern
+  // Right-click: copy "Artist – Title" to the clipboard, same pattern
   // (Util.shellQuote piped to wl-copy) as the network panel's copy button.
   function copyNowPlayingToClipboard() {
     if (!root.nowPlayingText) return
@@ -90,7 +90,7 @@ BarWidget {
       ? root.playingTitle + (root.nowPlayingText
           ? "\n" + root.nowPlayingText + (root.nowPlayingAgeText ? " (" + root.nowPlayingAgeText + ")" : "")
           : "")
-      : "DR Lyd — klik for kanaler"
+      : "DR Lyd — click for channels"
 
     iconComponent: Component {
       Item {

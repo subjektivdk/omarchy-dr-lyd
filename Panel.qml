@@ -197,13 +197,13 @@ Panel {
       onStreamFinished: {
         var raw = String(text || "")
         if (raw === "") {
-          root.fetchError = "Kunne ikke hente dr.dk/lyd"
+          root.fetchError = "Could not fetch dr.dk/lyd"
           root.scheduleFetchRetry()
           return
         }
         var parsed = Model.parseChannelsFromHtml(raw)
         if (parsed.length === 0) {
-          root.fetchError = "Kunne ikke finde kanaler på dr.dk"
+          root.fetchError = "Could not find channels on dr.dk"
           root.scheduleFetchRetry()
           return
         }
@@ -275,7 +275,7 @@ Panel {
     }
     var url = Model.streamUrlFor(channel, root.quality)
     if (!url) {
-      root.playbackError = "Ingen stream fundet for " + channel.title
+      root.playbackError = "No stream found for " + channel.title
       return
     }
 
@@ -367,11 +367,11 @@ Panel {
       if (Date.now() - root.mpvStartedAt > 30000) root.reconnectAttempts = 0
       if (root.reconnectAttempts < 1) {
         root.reconnectAttempts++
-        root.playbackError = "Mistede " + title + " — prøver igen…"
+        root.playbackError = "Lost " + title + " — retrying…"
         reconnectTimer.slug = slug
         reconnectTimer.restart()
       } else {
-        root.playbackError = "Kunne ikke afspille " + title
+        root.playbackError = "Could not play " + title
       }
     }
   }
@@ -513,9 +513,9 @@ Panel {
 
               Text {
                 textFormat: Text.PlainText
-                text: root.playingSlug ? ("Afspiller: " + root.playingTitle)
-                    : root.pendingPlaySlug ? "Starter…"
-                    : (root.playbackError || "Stoppet")
+                text: root.playingSlug ? ("Playing: " + root.playingTitle)
+                    : root.pendingPlaySlug ? "Starting…"
+                    : (root.playbackError || "Stopped")
                 color: root.playbackError && !root.playingSlug ? root.bar.urgent : root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
@@ -587,7 +587,7 @@ Panel {
             visible: root.channels.length === 0 && root.fetchError === ""
             x: Style.space(16)
             textFormat: Text.PlainText
-            text: "Henter kanaler…"
+            text: "Loading channels…"
             color: Qt.darker(root.bar.foreground, 1.5)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall

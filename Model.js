@@ -180,7 +180,7 @@ function nowPlayingAgeText(track, nowMs) {
   if (!track || !track.endsAt) return ""
   var staleMs = nowMs - track.endsAt
   if (staleMs < 60000) return ""
-  return "for " + Math.floor(staleMs / 60000) + " min. siden"
+  return Math.floor(staleMs / 60000) + " min ago"
 }
 
 // Poll again just after the current track should end. With no track (or no
@@ -236,8 +236,8 @@ function groupChannels(channels, favoriteSlugs) {
   // ten-channel regional families start collapsed so favorites and the
   // nationwide channels fit without scrolling.
   var groups = []
-  if (favorites.length) groups.push({ key: "favorites", label: "Favoritter", items: favorites, defaultCollapsed: false })
-  if (national.length) groups.push({ key: "national", label: "Landsdækkende", items: national, defaultCollapsed: false })
+  if (favorites.length) groups.push({ key: "favorites", label: "Favorites", items: favorites, defaultCollapsed: false })
+  if (national.length) groups.push({ key: "national", label: "Nationwide", items: national, defaultCollapsed: false })
   if (p4.length) groups.push({ key: "p4", label: "P4 regional", items: p4, defaultCollapsed: true })
   if (p5.length) groups.push({ key: "p5", label: "P5 regional", items: p5, defaultCollapsed: true })
   return groups

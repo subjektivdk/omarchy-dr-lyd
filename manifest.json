@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "author": "Martin",
   "license": "MIT",
-  "description": "Afspil DR's radiokanaler (P1-P8, regionale P4/P5, LYD ekstra) direkte fra baren.",
+  "description": "Play DR's radio channels (P1-P8, regional P4/P5, LYD ekstra) straight from the bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "DR Lyd",
-    "description": "Afspil DR's radiokanaler direkte fra baren",
+    "description": "Play DR's radio channels straight from the bar",
     "category": "Media",
     "aliases": ["dr", "dr-lyd", "radio", "dr radio", "p1", "p2", "p3", "p4", "p5", "p6", "p6 beat", "p8", "p8 jazz"],
     "allowMultiple": false,
@@ -27,17 +27,17 @@
       {
         "key": "defaultChannel",
         "type": "string",
-        "label": "Standardkanal (slug)",
+        "label": "Default channel (slug)",
         "defaultValue": "p6beat",
-        "description": "Kanal-slug fra dr.dk/lyd/<slug>, fx p1, p2, p3, p6beat, p8jazz. Bruges til midterklik indtil en kanal er blevet afspillet."
+        "description": "Channel slug from dr.dk/lyd/<slug>, e.g. p1, p2, p3, p6beat, p8jazz. Used for middle-click until a channel has been played."
       },
       {
         "key": "quality",
         "type": "enum",
-        "label": "Lydkvalitet",
+        "label": "Audio quality",
         "options": ["Low", "High"],
         "defaultValue": "High",
-        "description": "Foretrukket ICY MP3-bitrate. Falder tilbage til HLS hvis ICY ikke er tilgængelig."
+        "description": "Preferred ICY MP3 bitrate. Falls back to HLS if ICY is unavailable."
       }
     ]
   }
