@@ -89,6 +89,17 @@ omarchy-shell subjektivdk.dr-lyd status          # slug<TAB>title for what's pla
 list hasn't been fetched yet, `list`/`play` return `loading channel directory,
 retry shortly` — try again in a few seconds.
 
+## Claude Code skill
+
+[`claude-skill/`](claude-skill) is a [Claude Code](https://claude.com/claude-code)
+skill built on the remote control above. It lets Claude switch, stop or check
+the channel ("skift til P1", "sluk radioen") and look up what has been played
+recently. Link it into your skills directory so it updates with the plugin:
+
+```bash
+ln -s ~/.config/omarchy/plugins/subjektivdk.dr-lyd/claude-skill ~/.claude/skills/dr-lyd
+```
+
 ## Development
 
 ```bash
