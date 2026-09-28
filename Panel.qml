@@ -17,11 +17,13 @@ Panel {
 
   function open() {
     setCenterHoverRevealSuppressed(false)
+    root.resetCursor()
     root.controller.show()
     root.refreshIfStale()
   }
 
   function openFromHotkey() {
+    root.resetCursor()
     root.controller.show()
     root.refreshIfStale()
     Qt.callLater(function() {
@@ -469,6 +471,93 @@ Panel {
   // request needs it. Nothing contacts dr.dk just because the shell started.
   Component.onCompleted: ensureStateDirProc.running = true
 
+  // ---- Keyboard + mouse cursor ----
+  // One cursor shared by keyboard and mouse, as in the stock panels: rows
+  // paint their highlight from hasCursor (CursorSurface), never from their
+  // own containsMouse, so there is only ever one highlight on screen. The
+  // cursor is tracked by key rather than index so it stays on the same row
+  // when favoriting moves a channel or a group above it opens or closes.
+  property bool cursorActive: false
+  property string cursorKey: ""
+
+  readonly property var cursorTargets: {
+    var list = []
+    for (var i = 0; i < root.groupedChannels.length; i++) {
+      var group = root.groupedChannels[i]
+      list.push({ key: "group:" + group.key, group: group })
+      if (!root.isGroupExpanded(group)) continue
+      for (var j = 0; j < group.items.length; j++)
+        list.push({ key: "channel:" + group.items[j].slug, slug: group.items[j].slug })
+    }
+    return list
+  }
+
+  function hasCursor(key) {
+    return root.cursorActive && root.cursorKey === key
+  }
+
+  function setCursor(key) {
+    root.cursorActive = true
+    root.cursorKey = key
+  }
+
+  function resetCursor() {
+    root.cursorActive = false
+    root.cursorKey = ""
+    channelScroll.contentY = 0
+  }
+
+  function cursorIndex() {
+    for (var i = 0; i < root.cursorTargets.length; i++)
+      if (root.cursorTargets[i].key === root.cursorKey) return i
+    return -1
+  }
+
+  // The first arrow press only reveals the cursor, on the playing channel
+  // if it is listed, otherwise on the first row.
+  function moveCursor(delta) {
+    var targets = root.cursorTargets
+    if (targets.length === 0) return
+    var index = root.cursorIndex()
+    if (!root.cursorActive || index === -1) {
+      var playingKey = "channel:" + root.playingSlug
+      var start = 0
+      for (var i = 0; i < targets.length; i++)
+        if (targets[i].key === playingKey) start = i
+      root.setCursor(targets[start].key)
+      return
+    }
+    var next = Math.max(0, Math.min(targets.length - 1, index + delta))
+    root.setCursor(targets[next].key)
+  }
+
+  function activateCursor() {
+    var target = root.cursorTargets[root.cursorIndex()]
+    if (!root.cursorActive || !target) return
+    if (target.group) root.toggleGroup(target.group)
+    else root.togglePlay(target.slug)
+  }
+
+  function favoriteCursor() {
+    var target = root.cursorTargets[root.cursorIndex()]
+    if (root.cursorActive && target && target.slug) root.toggleFavorite(target.slug)
+  }
+
+  // Keeps the cursor row inside the scrolled viewport while j/k walk the list.
+  function ensureCursorVisible(item) {
+    if (!item) return
+    var margin = Style.space(6)
+    var maxY = Math.max(0, channelScroll.contentHeight - channelScroll.height)
+    var top = item.mapToItem(channelColumn, 0, 0).y
+    var bottom = top + item.height
+    if (top < channelScroll.contentY + margin)
+      channelScroll.contentY = Math.max(0, Math.min(maxY, top - margin))
+    else if (bottom > channelScroll.contentY + channelScroll.height - margin)
+      channelScroll.contentY = Math.max(0, Math.min(maxY, bottom + margin - channelScroll.height))
+  }
+
+  readonly property bool refreshBusy: fetchProc.running || nowPlayingProc.running
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -482,8 +571,15 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
+      onActivateRequested: root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "f") root.favoriteCursor()
+        else if (t === "r") root.refresh()
+        else if (t === "s") root.stop()
+      }
 
       Flickable {
         id: channelScroll
@@ -499,99 +595,58 @@ Panel {
           width: channelScroll.width
           spacing: Style.space(10)
 
-          // ---- Header: status + refresh ----
-          Item {
-            width: parent.width
-            height: headerRow.implicitHeight + Style.space(12)
-
-            Row {
-              id: headerRow
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(16)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-
+          // ---- Hero: channel · what's on air · refresh ----
+          PanelHero {
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            iconOpacity: root.playingSlug ? 1.0 : 0.5
+            iconComponent: Component {
               Text {
                 textFormat: Text.PlainText
-                text: root.playingSlug ? ("Playing: " + root.playingTitle)
-                    : root.pendingPlaySlug ? "Starting…"
-                    : (root.playbackError || "Stopped")
-                color: root.playbackError && !root.playingSlug ? root.bar.urgent : root.bar.foreground
+                text: "󰐹"
+                color: root.bar.foreground
                 font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
+                font.pixelSize: Style.font.display
               }
             }
-
-            Rectangle {
-              id: refreshButton
-              readonly property bool busy: fetchProc.running || nowPlayingProc.running
-              width: Style.space(26)
-              height: Style.space(26)
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              radius: Style.cornerRadius
-              color: refreshArea.containsMouse && !busy
-                ? Style.hoverFillFor(root.bar.foreground, Color.accent)
-                : "transparent"
-
-              Text {
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: refreshButton.busy ? "…" : "↻"
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.body
-
-                RotationAnimator on rotation {
-                  running: refreshButton.busy
-                  from: 0; to: 360
-                  duration: 800
-                  loops: Animation.Infinite
-                }
-              }
-
-              MouseArea {
-                id: refreshArea
-                anchors.fill: parent
-                hoverEnabled: true
-                enabled: !refreshButton.busy
-                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            title: root.playingSlug ? root.playingTitle
+              : root.pendingPlaySlug ? "Starting…"
+              : "DR Lyd"
+            meta: root.playingSlug
+              ? (root.nowPlayingText
+                  ? root.nowPlayingText + (root.nowPlayingAgeText ? " · " + root.nowPlayingAgeText : "")
+                  : "On air")
+              : (root.playbackError || "Stopped")
+            trailingControl: Component {
+              PanelActionButton {
+                iconText: "󰑐"
+                tooltipText: root.refreshBusy ? "Refreshing…" : "Refresh (r)"
+                enabled: !root.refreshBusy
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
                 onClicked: root.refresh()
               }
             }
           }
 
-          Rectangle {
-            width: parent.width
-            height: Style.spacing.hairline
-            color: root.bar.foreground
-            opacity: 0.12
-          }
-
           Text {
             visible: root.fetchError !== "" && root.channels.length === 0
-            x: Style.space(16)
-            width: parent.width - Style.space(32)
+            width: parent.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
             text: root.fetchError
-            color: Qt.darker(root.bar.foreground, 1.5)
+            color: root.bar.urgent
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
-            font.italic: true
           }
 
           Text {
             visible: root.channels.length === 0 && root.fetchError === ""
-            x: Style.space(16)
             textFormat: Text.PlainText
             text: "Loading channels…"
-            color: Qt.darker(root.bar.foreground, 1.5)
+            color: Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
-            font.italic: true
           }
 
           // ---- Grouped channel list ----
@@ -603,47 +658,53 @@ Panel {
               required property var modelData
               readonly property bool expanded: root.isGroupExpanded(modelData)
               width: parent.width
-              spacing: Style.space(2)
+              spacing: Style.space(6)
 
-              // Clickable heading: chevron + label, plus the channel count
-              // while collapsed so it's clear something is hidden.
-              Rectangle {
+              PanelSeparator {
+                foreground: root.bar.foreground
+              }
+
+              // Section heading with a +/− on the right, lined up with the
+              // hearts below. Collapsed groups show their channel count.
+              CursorSurface {
+                id: groupHeader
+                readonly property string cursorKey: "group:" + groupColumn.modelData.key
                 width: parent.width
-                height: groupHeader.implicitHeight + Style.space(8)
-                radius: Style.cornerRadius
-                color: groupHeaderArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+                implicitHeight: Math.max(groupLabel.implicitHeight, groupToggle.implicitHeight) + Style.space(4)
+                hasCursor: root.hasCursor(cursorKey)
+                onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(groupHeader)
+                foreground: root.bar.foreground
 
-                Row {
-                  id: groupHeader
+                PanelSectionHeader {
+                  id: groupLabel
                   anchors.left: parent.left
-                  anchors.leftMargin: Style.space(16)
+                  anchors.leftMargin: Style.space(6)
                   anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(6)
-
-                  Text {
-                    textFormat: Text.PlainText
-                    text: groupColumn.expanded ? "▾" : "▸"
-                    color: Qt.darker(root.bar.foreground, 1.5)
-                    font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  Text {
-                    textFormat: Text.PlainText
-                    text: groupColumn.modelData.label.toUpperCase()
-                      + (groupColumn.expanded ? "" : " (" + groupColumn.modelData.items.length + ")")
-                    color: Qt.darker(root.bar.foreground, 1.5)
-                    font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.letterSpacing: 1
-                  }
+                  text: groupColumn.modelData.label.toUpperCase()
+                    + (groupColumn.expanded ? "" : " (" + groupColumn.modelData.items.length + ")")
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
                 }
 
                 MouseArea {
-                  id: groupHeaderArea
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: if (containsMouse) root.setCursor(groupHeader.cursorKey)
+                  onClicked: root.toggleGroup(groupColumn.modelData)
+                }
+
+                PanelActionButton {
+                  id: groupToggle
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: groupColumn.expanded ? "󰍴" : "󰐕"
+                  tooltipText: groupColumn.expanded ? "Collapse" : "Expand"
+                  foreground: Qt.darker(root.bar.foreground, 1.4)
+                  hoverColor: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  onHovered: function(on) { if (on) root.setCursor(groupHeader.cursorKey) }
                   onClicked: root.toggleGroup(groupColumn.modelData)
                 }
               }
@@ -651,82 +712,72 @@ Panel {
               Repeater {
                 model: groupColumn.expanded ? groupColumn.modelData.items : []
 
-                Rectangle {
+                CursorSurface {
                   id: channelRow
                   required property var modelData
+                  readonly property string cursorKey: "channel:" + modelData.slug
+                  readonly property bool isPlaying: modelData.slug === root.playingSlug
+                  readonly property bool isFavorite: root.isFavorite(modelData.slug)
                   width: parent.width
-                  height: rowContent.implicitHeight + Style.space(10)
-                  radius: Style.cornerRadius
-                  color: modelData.slug === root.playingSlug
-                    ? Style.selectedFillFor(root.bar.foreground, Color.accent)
-                    : (rowArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
+                  implicitHeight: Math.max(channelTitle.implicitHeight, favoriteButton.implicitHeight) + Style.space(6)
+                  hasCursor: root.hasCursor(cursorKey)
+                  onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(channelRow)
+                  current: isPlaying
+                  foreground: root.bar.foreground
 
-                  Row {
-                    id: rowContent
+                  // Fixed slot so titles stay aligned whether or not a row plays.
+                  Text {
+                    id: playGlyph
                     anchors.left: parent.left
-                    anchors.leftMargin: Style.space(16)
-                    anchors.right: favoriteButton.left
+                    anchors.leftMargin: Style.space(6)
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(8)
+                    width: Style.space(18)
+                    horizontalAlignment: Text.AlignHCenter
+                    textFormat: Text.PlainText
+                    text: channelRow.isPlaying ? "󰐊" : ""
+                    color: Style.selectedStateColor(root.bar.foreground, Color.accent)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.icon
+                  }
 
-                    Text {
-                      textFormat: Text.PlainText
-                      text: channelRow.modelData.slug === root.playingSlug ? "▶" : "·"
-                      color: channelRow.modelData.slug === root.playingSlug
-                        ? Style.selectedStateColor(root.bar.foreground, Color.accent)
-                        : Qt.darker(root.bar.foreground, 1.5)
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                    }
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: channelRow.modelData.title
-                      color: channelRow.modelData.slug === root.playingSlug
-                        ? Style.selectedStateColor(root.bar.foreground, Color.accent)
-                        : root.bar.foreground
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.body
-                    }
+                  Text {
+                    id: channelTitle
+                    anchors.left: playGlyph.right
+                    anchors.leftMargin: Style.space(6)
+                    anchors.right: favoriteButton.left
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: channelRow.modelData.title
+                    color: channelRow.isPlaying
+                      ? Style.selectedStateColor(root.bar.foreground, Color.accent)
+                      : root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: channelRow.isPlaying
+                    elide: Text.ElideRight
                   }
 
                   MouseArea {
-                    id: rowArea
-                    anchors.left: parent.left
-                    anchors.right: favoriteButton.left
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
+                    anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: if (containsMouse) root.setCursor(channelRow.cursorKey)
                     onClicked: root.togglePlay(channelRow.modelData.slug)
                   }
 
-                  Rectangle {
+                  PanelActionButton {
                     id: favoriteButton
-                    width: Style.space(26)
-                    height: Style.space(26)
                     anchors.right: parent.right
                     anchors.rightMargin: Style.space(6)
                     anchors.verticalCenter: parent.verticalCenter
-                    radius: Style.cornerRadius
-                    color: favoriteArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
-
-                    Text {
-                      anchors.centerIn: parent
-                      textFormat: Text.PlainText
-                      text: root.isFavorite(channelRow.modelData.slug) ? "♥" : "♡"
-                      color: root.isFavorite(channelRow.modelData.slug) ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.body
-                    }
-
-                    MouseArea {
-                      id: favoriteArea
-                      anchors.fill: parent
-                      hoverEnabled: true
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: root.toggleFavorite(channelRow.modelData.slug)
-                    }
+                    iconText: channelRow.isFavorite ? "󰋑" : "󰋕"
+                    tooltipText: channelRow.isFavorite ? "Remove from favorites (f)" : "Add to favorites (f)"
+                    foreground: channelRow.isFavorite ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
+                    hoverColor: Color.accent
+                    fontFamily: root.bar.fontFamily
+                    onHovered: function(on) { if (on) root.setCursor(channelRow.cursorKey) }
+                    onClicked: root.toggleFavorite(channelRow.modelData.slug)
                   }
                 }
               }

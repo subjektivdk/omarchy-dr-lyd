@@ -8,7 +8,11 @@ regional P4/P5 channels) straight from the Omarchy bar.
 - Click the DR icon in the bar → panel with all channels, grouped into
   Favorites / Nationwide / P4 regional / P5 regional
 - Click a channel to play it, click again to stop
-- A heart button on each channel marks it as a favorite (shown at the top)
+- A heart button on each channel marks it as a favorite (shown at the top);
+  the +/− on each heading expands or collapses that group
+- The panel header shows the playing channel and the track on air
+- Keyboard: ↑/↓ or j/k move, Enter/Space plays a channel or opens/closes a
+  group, `f` toggles favorite, `r` refreshes, `s` stops, Esc closes
 - Middle-click the icon to start/stop the last played channel
 - Hovering the icon shows the channel and the track currently playing
   (artist – title; talk channels like P1 show only the channel). If DR's
@@ -69,7 +73,7 @@ expected to end (at least 15 s between lookups). The last known track is
 shown for up to 5 minutes after it should have ended — normal breaks between
 tracks (jingles, traffic, weather, the host talking) are usually shorter than
 that. If the lookup fails, or the channel has no playlist (LYD ekstra), only
-the channel name is shown. The ↻ button in the panel header refreshes both
+the channel name is shown. The refresh button in the panel header refreshes both
 the channel list and the now-playing lookup immediately, without waiting for
 the scheduled poll.
 
