@@ -164,9 +164,13 @@ ln -s ~/.config/omarchy/plugins/subjektivdk.dr-lyd/claude-skill ~/.claude/skills
 ## Development
 
 ```bash
-omarchy plugin validate ~/.config/omarchy/plugins/subjektivdk.dr-lyd
+scripts/test.sh         # validate, qmllint, Model.js + history.py tests
 omarchy restart shell   # QML changes in bar widgets require a restart
 ```
+
+The tests run offline against synthetic dr.dk pages and a scratch
+database; they need `qt6-declarative` (`qmllint`, `qmltestrunner`),
+`python3` and `sqlite3`.
 
 ## License
 
