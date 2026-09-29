@@ -137,22 +137,29 @@ function parseNowPlayingFromHtml(html, nowMs) {
 
   var latest = null
   for (var i = 0; i < points.length; i++) {
-    var point = points[i]
-    if (!point || point.type !== "Track" || !point.title) continue
-    var startedAt = Date.parse(point.playedTime)
-    if (isNaN(startedAt) || startedAt > nowMs) continue
-    if (!latest || startedAt > latest.startedAt) {
-      var duration = Number(point.durationMilliseconds) || 0
-      latest = {
-        title: String(point.title),
-        artist: artistOf(point),
-        startedAt: startedAt,
-        endsAt: duration > 0 ? startedAt + duration : 0
-      }
-    }
+    var track = trackFromPoint(points[i])
+    if (!track || track.startedAt > nowMs) continue
+    if (!latest || track.startedAt > latest.startedAt) latest = track
   }
   if (latest && latest.endsAt && nowMs > latest.endsAt + NOW_PLAYING_GRACE_MS) return null
   return latest
+}
+
+// One playlist entry as the plugin uses it, or null for anything that
+// isn't a usable track (jingles, entries without a title or timestamp).
+function trackFromPoint(point) {
+  if (!point || point.type !== "Track" || !point.title) return null
+  var startedAt = Date.parse(point.playedTime)
+  if (isNaN(startedAt)) return null
+  var duration = Number(point.durationMilliseconds) || 0
+  return {
+    title: String(point.title),
+    artist: artistOf(point),
+    startedAt: startedAt,
+    durationMs: duration,
+    endsAt: duration > 0 ? startedAt + duration : 0,
+    trackUrn: String(point.trackUrn || "")
+  }
 }
 
 // DR's `description` is the artist line as they present it ("A og B");
@@ -250,6 +257,7 @@ function parseStateFile(raw) {
   var favorites = []
   var lastPlayed = ""
   var groups = {}
+  var openSession = null
   try {
     var parsed = JSON.parse(String(raw || ""))
     if (parsed && Array.isArray(parsed.favorites))
@@ -259,8 +267,243 @@ function parseStateFile(raw) {
       for (var key in parsed.groups)
         if (typeof parsed.groups[key] === "boolean") groups[key] = parsed.groups[key]
     }
+    var o = parsed && parsed.openSession
+    if (o && typeof o.slug === "string" && o.slug && Number(o.startedAt) > 0 && Number(o.lastSeenAt) >= Number(o.startedAt))
+      openSession = { slug: o.slug, startedAt: Number(o.startedAt), lastSeenAt: Number(o.lastSeenAt) }
   } catch (e) {
     // First run or corrupt file: fall back to empty state.
   }
-  return { favorites: favorites, lastPlayed: lastPlayed, groups: groups }
+  return { favorites: favorites, lastPlayed: lastPlayed, groups: groups, openSession: openSession }
+}
+
+// ---- Listening history ----
+// The playlist page lists every track of the programme on air, not just the
+// current one, so each now-playing lookup doubles as a history source: the
+// tracks that overlap the listening session are logged, including short
+// ones that started and ended between two polls. Tracks from before the
+// session started (the programme's earlier songs) are not.
+// With `firstLoggedMs` (backfill) tracks that started at or after that
+// already-logged track count too, even outside the session: they fill gaps
+// without reaching back to songs that merely overlapped its start.
+function tracksForLog(html, sessionStartMs, untilMs, firstLoggedMs) {
+  var data = extractNextData(html)
+  var props = data && data.props && data.props.pageProps
+  var points = props && props.playlistIndexPoints
+  if (!Array.isArray(points) || !sessionStartMs) return []
+  var programmes = programmesOf(props.schedule)
+  var out = []
+  for (var i = 0; i < points.length; i++) {
+    var track = trackFromPoint(points[i])
+    if (!track || track.startedAt > untilMs) continue
+    // Unknown duration: only count it if it started while listening.
+    var lastHeardAt = track.endsAt || track.startedAt
+    var inGap = firstLoggedMs > 0 && track.startedAt >= firstLoggedMs
+    if (lastHeardAt < sessionStartMs && !inGap) continue
+    track.programme = programmeAt(programmes, track.startedAt)
+    out.push(track)
+  }
+  return out
+}
+
+function programmesOf(schedule) {
+  var items = schedule && Array.isArray(schedule.items) ? schedule.items : []
+  var out = []
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    var start = Date.parse(item && item.startTime)
+    var end = Date.parse(item && item.endTime)
+    if (!item || !item.title || isNaN(start) || isNaN(end)) continue
+    out.push({ title: String(item.title), start: start, end: end })
+  }
+  return out
+}
+
+function programmeAt(programmes, ms) {
+  for (var i = 0; i < programmes.length; i++)
+    if (ms >= programmes[i].start && ms < programmes[i].end) return programmes[i].title
+  return ""
+}
+
+// SQL is handed to the sqlite3 CLI as a single argv entry (no shell), so
+// the only thing that needs escaping is the quote of the string literal.
+function sqlString(value) {
+  return "'" + String(value).replace(/'/g, "''") + "'"
+}
+
+var HISTORY_SCHEMA_SQL =
+  "CREATE TABLE IF NOT EXISTS plays(" +
+  "id INTEGER PRIMARY KEY, channel TEXT NOT NULL, played_at INTEGER NOT NULL, " +
+  "duration_ms INTEGER, artist TEXT, title TEXT NOT NULL, track_urn TEXT, programme TEXT, " +
+  "UNIQUE(channel, played_at, title));" +
+  "CREATE INDEX IF NOT EXISTS plays_by_time ON plays(played_at DESC);"
+
+// One statement per batch: the tracks travel as a JSON array literal and
+// json_each unpacks them, so a lookup costs one sqlite3 run no matter how
+// many tracks it returned. UNIQUE + OR IGNORE makes re-logging the same
+// playlist (every poll sees it again) a no-op.
+function historyInsertSql(slug, tracks) {
+  if (!slug || !tracks || tracks.length === 0) return ""
+  var rows = []
+  for (var i = 0; i < tracks.length; i++) {
+    var t = tracks[i]
+    rows.push({
+      channel: slug,
+      played_at: Math.floor(t.startedAt / 1000),
+      duration_ms: t.durationMs || null,
+      artist: t.artist || null,
+      title: t.title,
+      track_urn: t.trackUrn || null,
+      programme: t.programme || null
+    })
+  }
+  return HISTORY_SCHEMA_SQL +
+    "INSERT OR IGNORE INTO plays(channel, played_at, duration_ms, artist, title, track_urn, programme) " +
+    "SELECT json_extract(value,'$.channel'), json_extract(value,'$.played_at'), " +
+    "json_extract(value,'$.duration_ms'), json_extract(value,'$.artist'), json_extract(value,'$.title'), " +
+    "json_extract(value,'$.track_urn'), json_extract(value,'$.programme') " +
+    "FROM json_each(" + sqlString(JSON.stringify(rows)) + ");"
+}
+
+function historyPruneSql(days) {
+  var n = Math.floor(Number(days) || 0)
+  if (n <= 0) return ""
+  return HISTORY_SCHEMA_SQL +
+    "DELETE FROM plays WHERE played_at < CAST(strftime('%s','now') AS INTEGER) - " + (n * 86400) + ";"
+}
+
+function historySelectSql(limit) {
+  return "SELECT id, channel, played_at, artist, title, programme FROM plays " +
+    "ORDER BY played_at DESC LIMIT " + Math.max(1, Math.floor(Number(limit) || 100)) + ";"
+}
+
+// `sqlite3 -json` prints nothing at all for zero rows (and for a database
+// that doesn't exist yet), so empty/garbled output is just "no history".
+function parseHistoryRows(raw) {
+  try {
+    var rows = JSON.parse(String(raw || ""))
+    return Array.isArray(rows) ? rows : []
+  } catch (e) {
+    return []
+  }
+}
+
+function pad2(n) {
+  return n < 10 ? "0" + n : String(n)
+}
+
+function historyTimeText(row) {
+  var d = new Date(Number(row.played_at) * 1000)
+  return pad2(d.getHours()) + ":" + pad2(d.getMinutes())
+}
+
+function historyTrackText(row) {
+  return row.artist ? row.artist + " – " + row.title : String(row.title || "")
+}
+
+function dayKey(d) {
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+}
+
+// Rows arrive newest first; they're bucketed per local calendar day under
+// "Today" / "Yesterday" / "Mon 28 Sep" headings, keeping that order.
+function groupHistory(rows, nowMs) {
+  var now = new Date(nowMs)
+  var today = dayKey(now)
+  var yesterday = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  var groups = []
+  var current = null
+  for (var i = 0; i < rows.length; i++) {
+    var d = new Date(Number(rows[i].played_at) * 1000)
+    var key = dayKey(d)
+    if (!current || current.key !== key) {
+      var label = key === today ? "Today"
+        : key === yesterday ? "Yesterday"
+        : days[d.getDay()] + " " + d.getDate() + " " + months[d.getMonth()]
+      current = { key: key, label: label, items: [] }
+      groups.push(current)
+    }
+    current.items.push(rows[i])
+  }
+  return groups
+}
+
+// DR lists a track a few minutes after it starts, so a lookup made right
+// when a session ends usually misses the track that was on air. The
+// playlist has "caught up" with the session once it lists a track that was
+// still playing at (or started after) the session's end.
+function playlistCaughtUp(html, endedAtMs) {
+  var data = extractNextData(html)
+  var props = data && data.props && data.props.pageProps
+  var points = props && props.playlistIndexPoints
+  if (!Array.isArray(points)) return false
+  for (var i = 0; i < points.length; i++) {
+    var track = trackFromPoint(points[i])
+    if (track && (track.endsAt || track.startedAt) >= endedAtMs) return true
+  }
+  return false
+}
+
+// ---- Backfill on refresh ----
+// A manual refresh fills gaps (shell restarts, DR lagging past a session
+// end) by re-logging everything the channel played from the first track
+// logged today up to now. The page for the programme on air only lists that
+// programme, but its schedule names the day's other programmes, and each
+// has its own playlist page at /lyd/playlister/<slug>/<date>/<episode>.
+function historyFirstTodaySql(slug, dayStartSec) {
+  return "SELECT MIN(played_at) AS first FROM plays WHERE channel = " + sqlString(slug) +
+    " AND played_at >= " + Math.floor(Number(dayStartSec) || 0) + ";"
+}
+
+function parseFirstPlayedMs(raw) {
+  var rows = parseHistoryRows(raw)
+  var first = rows.length ? Number(rows[0].first) : 0
+  return first > 0 ? first * 1000 : 0
+}
+
+function startOfDaySec(nowMs) {
+  var d = new Date(nowMs)
+  return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000)
+}
+
+// Paths ("<date>/<episode-slug>") of the earlier programmes that overlap
+// [fromMs, untilMs]. The programme on the page itself is left out; its
+// tracks are already in hand.
+function backfillEpisodePaths(html, fromMs, untilMs) {
+  var data = extractNextData(html)
+  var props = data && data.props && data.props.pageProps
+  if (!props || !props.schedule || !Array.isArray(props.schedule.items)) return []
+  var current = props.playlistQuery && props.playlistQuery.productionNumber
+  var out = []
+  for (var i = 0; i < props.schedule.items.length; i++) {
+    var item = props.schedule.items[i]
+    if (!item || !item.slug || !/^[a-z0-9-]+$/i.test(item.slug)) continue
+    if (current && String(item.productionNumber) === String(current)) continue
+    var start = Date.parse(item.startTime)
+    var end = Date.parse(item.endTime)
+    if (isNaN(start) || isNaN(end) || end <= fromMs || start > untilMs) continue
+    out.push(dayKey(new Date(start)) + "/" + item.slug)
+  }
+  return out
+}
+
+// Where a backfill window starts, from its anchor (first track logged today
+// or the session start): the start of the programme airing at the anchor
+// ("Programme"), the top of its clock hour ("Hour"), or the anchor itself
+// ("Listened", and the fallback when the schedule doesn't cover it).
+function backfillWindowStart(html, anchorMs, mode) {
+  if (mode === "Hour") {
+    var d = new Date(anchorMs)
+    d.setMinutes(0, 0, 0)
+    return d.getTime()
+  }
+  if (mode === "Programme") {
+    var data = extractNextData(html)
+    var props = data && data.props && data.props.pageProps
+    var programmes = programmesOf(props && props.schedule)
+    for (var i = 0; i < programmes.length; i++)
+      if (anchorMs >= programmes[i].start && anchorMs < programmes[i].end) return programmes[i].start
+  }
+  return anchorMs
 }

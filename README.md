@@ -12,7 +12,12 @@ regional P4/P5 channels) straight from the Omarchy bar.
   the +/− on each heading expands or collapses that group
 - The panel header shows the playing channel and the track on air
 - Keyboard: ↑/↓ or j/k move, Enter/Space plays a channel or opens/closes a
-  group, `f` toggles favorite, `r` refreshes, `s` stops, Esc closes
+  group, `f` toggles favorite, `r` refreshes, `s` stops, `c`/`p` switch
+  between the Channels and History tabs, Esc closes
+- **History**: the panel's *History* tab lists the tracks you have listened
+  to, grouped by day, with channel and programme. Click or Enter copies
+  "Artist – Title"; the export button (`e`) writes it all to
+  `~/dr-lyd-history.md`. Logged to SQLite, see [Listening history](#listening-history)
 - Middle-click the icon to start/stop the last played channel
 - Hovering the icon shows the channel and the track currently playing
   (artist – title; talk channels like P1 show only the channel). If DR's
@@ -29,6 +34,7 @@ regional P4/P5 channels) straight from the Omarchy bar.
 
 - `mpv` (playback)
 - `curl` (fetches the channel list)
+- `sqlite3` (listening history; part of Arch's `sqlite` package, installed by default)
 - `mpv-mpris` (optional — MPRIS integration with `omarchy.media` and media keys)
 
 ```bash
@@ -54,6 +60,9 @@ Set in `~/.config/omarchy/shell.json` on the widget's entry, or via
 |------------------|----------|------------------------------------------------------------------------------|
 | `defaultChannel` | `p6beat` | Channel slug from `dr.dk/lyd/<slug>`. Used until a channel has been played   |
 | `quality`        | `High`   | `Low` or `High` — preferred MP3 bitrate                                      |
+| `logHistory`     | `true`   | Log the tracks you listen to (see below)                                     |
+| `historyDays`    | `0`      | Delete logged tracks older than this many days at shell start; `0` keeps all |
+| `backfillFrom`   | `Programme` | How far back refresh fills history: `Programme`, `Hour` or `Listened`     |
 
 Favorites and the last played channel are stored in
 `~/.local/state/omarchy/settings/dr-lyd.json`.
@@ -77,6 +86,48 @@ the channel name is shown. The refresh button in the panel header refreshes both
 the channel list and the now-playing lookup immediately, without waiting for
 the scheduled poll.
 
+## Listening history
+
+The playlist page lists every track of the programme on air, so each
+now-playing lookup also logs the tracks that overlap your listening session —
+including short ones that started and ended between two lookups, but not the
+programme's earlier tracks from before you tuned in. When a session ends
+(stop, switching channel, or a stream that can't be restarted) the plugin
+keeps looking up that channel once a minute until DR has listed the track
+that was on air at the end — DR lists tracks a few minutes after they start —
+for at most 10 minutes. No extra requests are made while playing.
+
+The open session is saved to the state file with a 30-second heartbeat, so a
+session cut short by a shell restart, plugin reload or crash is finished the
+same way on the next start.
+
+The refresh button (`r`) also backfills: while a channel plays, it re-reads
+DR's playlists for that channel up to now — including earlier programmes,
+which have their own playlist pages — and logs anything missing. It starts
+from the first track logged on the channel today (or the session start),
+widened by `backfillFrom` to the start of that programme (e.g. all of
+Morgenbeatet), the top of that hour, or not at all (`Listened`). That fills
+gaps from outages, but also logs what aired while you weren't listening.
+
+Tracks go to `~/.local/state/omarchy/dr-lyd/history.sqlite` via the `sqlite3`
+CLI, one row per track (`channel`, `played_at` as Unix seconds, `duration_ms`,
+`artist`, `title`, `track_urn`, `programme`):
+
+```bash
+sqlite3 ~/.local/state/omarchy/dr-lyd/history.sqlite \
+  "SELECT datetime(played_at, 'unixepoch', 'localtime'), channel, artist, title
+   FROM plays ORDER BY played_at DESC LIMIT 20"
+```
+
+The bundled `claude-skill/bin/history.py` lists, searches and exports it
+without writing any SQL:
+
+```bash
+history.py list 7 p6beat                  # last week on P6 Beat
+history.py search "sort sol"              # artist, title or programme
+history.py export ~/dr-lyd-history.md 30  # Markdown, per day; 0 days = everything
+```
+
 ## Remote control
 
 The plugin can be controlled from outside via the Omarchy shell's IPC, without
@@ -97,7 +148,8 @@ retry shortly` — try again in a few seconds.
 
 [`claude-skill/`](claude-skill) is a [Claude Code](https://claude.com/claude-code)
 skill built on the remote control above. It lets Claude switch, stop or check
-the channel ("skift til P1", "sluk radioen") and look up what has been played
+the channel ("skift til P1", "sluk radioen"), look up what you listened to
+("hvad hørte jeg i går") and what has been played
 recently. Link it into your skills directory so it updates with the plugin:
 
 ```bash

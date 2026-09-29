@@ -57,6 +57,8 @@ Panel {
   // ---- Settings (manifest-backed: defaultChannel, quality) ----
   readonly property string defaultChannel: String(root.setting("defaultChannel", "p6beat"))
   readonly property string quality: String(root.setting("quality", "High"))
+  readonly property bool logHistory: root.setting("logHistory", true) === true
+  readonly property int historyDays: Number(root.setting("historyDays", 0)) || 0
 
   // ---- Persisted state: favorites + last played channel ----
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/settings/"
@@ -108,6 +110,24 @@ Panel {
     root.lastPlayed = parsed.lastPlayed
     root.groupState = parsed.groups
     root.stateLoaded = true
+    // A session still marked open means the shell stopped (restart, plugin
+    // reload, crash) while a channel played. Finish it from its last
+    // heartbeat once settings have been injected.
+    if (parsed.openSession) {
+      recoverSessionTimer.session = parsed.openSession
+      recoverSessionTimer.start()
+    }
+  }
+
+  Timer {
+    id: recoverSessionTimer
+    property var session: null
+    interval: 2000
+    onTriggered: {
+      if (session) root.logSessionEnd(session.slug, session.startedAt, session.lastSeenAt)
+      session = null
+      root.scheduleStateSave()
+    }
   }
 
   function scheduleStateSave() {
@@ -119,13 +139,15 @@ Panel {
     stateFile.setText(JSON.stringify({
       favorites: root.favorites,
       lastPlayed: root.lastPlayed,
-      groups: root.groupState
+      groups: root.groupState,
+      openSession: root.openSession
     }, null, 2) + "\n")
   }
 
   Process {
     id: ensureStateDirProc
-    command: ["mkdir", "-p", root.stateDir]
+    command: ["mkdir", "-p", root.stateDir, root.historyDir]
+    onExited: root.queueHistoryWrite(Model.historyPruneSql(root.historyDays))
   }
 
   FileView {
@@ -176,6 +198,7 @@ Panel {
     fetchRetries = 0
     startFetch()
     root.refreshNowPlaying()
+    root.startBackfill()
   }
 
   // Re-scrape once an hour at most; a manual refresh (button) always forces it.
@@ -281,6 +304,7 @@ Panel {
       return
     }
 
+    if (!isReconnect) root.endSession()
     root.playToken++
     var token = root.playToken
     root.killMpv()
@@ -291,6 +315,10 @@ Panel {
       mpvProc.running = true
       root.mpvStartedAt = Date.now()
       root.playbackError = ""
+      if (!isReconnect || !root.sessionStartedAt) {
+        root.sessionStartedAt = Date.now()
+        root.openSession = { slug: slug, startedAt: root.sessionStartedAt, lastSeenAt: root.sessionStartedAt }
+      }
       root.playingSlug = slug
       root.lastPlayed = slug
       root.scheduleStateSave()
@@ -298,6 +326,7 @@ Panel {
   }
 
   function stop() {
+    root.endSession()
     root.playToken++
     root.pendingPlaySlug = ""
     root.playbackError = ""
@@ -374,6 +403,10 @@ Panel {
         reconnectTimer.restart()
       } else {
         root.playbackError = "Could not play " + title
+        root.logSessionEnd(slug, root.sessionStartedAt, Date.now())
+        root.sessionStartedAt = 0
+        root.openSession = null
+        root.scheduleStateSave()
       }
     }
   }
@@ -411,7 +444,10 @@ Panel {
     interval: 30000
     repeat: true
     running: root.playingSlug !== ""
-    onTriggered: root.nowClock = Date.now()
+    onTriggered: {
+      root.nowClock = Date.now()
+      root.touchSession()
+    }
   }
 
   function fetchNowPlaying() {
@@ -450,6 +486,7 @@ Panel {
           nowPlayingTimer.interval = 300000
         } else {
           root.nowPlaying = Model.parseNowPlayingFromHtml(raw, now)
+          root.logTracks(root.playingSlug, Model.tracksForLog(raw, root.sessionStartedAt, now))
           nowPlayingTimer.interval = Model.nowPlayingPollDelay(root.nowPlaying, now)
         }
         nowPlayingTimer.restart()
@@ -467,6 +504,272 @@ Panel {
     onTriggered: root.fetchNowPlaying()
   }
 
+  // ---- Listening history (sqlite) ----
+  // Every now-playing lookup logs the tracks that overlap the current
+  // listening session (see Model.tracksForLog). DR lists a track a few
+  // minutes after it starts, so ending a session — stop, switching channel,
+  // giving up on a dead stream — keeps looking up the old channel once a
+  // minute until DR has listed the track that was on air at the end (at
+  // most 10 minutes). The open session is also saved to the state file with
+  // a 30 s heartbeat, so a shell restart mid-session is finished the same
+  // way on the next start. Writes go to the sqlite3 CLI one at a time
+  // through a queue.
+  readonly property string historyDir: Quickshell.env("HOME") + "/.local/state/omarchy/dr-lyd/"
+  readonly property string historyPath: root.historyDir + "history.sqlite"
+  property double sessionStartedAt: 0
+  property var openSession: null
+  property var historyWriteQueue: []
+  property var sessionEndQueue: []
+  readonly property int sessionEndRetryMs: 60000
+  readonly property int sessionEndGiveUpMs: 600000
+
+  function endSession() {
+    if (root.playingSlug && root.sessionStartedAt)
+      root.logSessionEnd(root.playingSlug, root.sessionStartedAt, Date.now())
+    root.sessionStartedAt = 0
+    if (root.openSession) {
+      root.openSession = null
+      root.scheduleStateSave()
+    }
+  }
+
+  function touchSession() {
+    if (!root.openSession || !root.playingSlug) return
+    root.openSession = { slug: root.openSession.slug, startedAt: root.openSession.startedAt, lastSeenAt: Date.now() }
+    root.scheduleStateSave()
+  }
+
+  function logTracks(slug, tracks) {
+    if (!root.logHistory) return
+    root.queueHistoryWrite(Model.historyInsertSql(slug, tracks))
+  }
+
+  function queueHistoryWrite(sql) {
+    if (!sql) return
+    root.historyWriteQueue = root.historyWriteQueue.concat([sql])
+    root.runHistoryWrite()
+  }
+
+  function runHistoryWrite() {
+    if (historyWriteProc.running || root.historyWriteQueue.length === 0) return
+    var queue = root.historyWriteQueue.slice()
+    historyWriteProc.command = ["sqlite3", "-bail", "-cmd", ".timeout 2000", root.historyPath, queue.shift()]
+    root.historyWriteQueue = queue
+    historyWriteProc.running = true
+  }
+
+  Process {
+    id: historyWriteProc
+    stderr: StdioCollector {
+      onStreamFinished: if (text) console.warn("dr-lyd history: " + text)
+    }
+    onExited: {
+      if (root.view === "history") root.loadHistory()
+      Qt.callLater(root.runHistoryWrite)
+    }
+  }
+
+  function logSessionEnd(slug, startedAt, endedAt) {
+    if (!root.logHistory || !slug || !startedAt) return
+    root.sessionEndQueue = root.sessionEndQueue.concat([{ slug: slug, startedAt: startedAt, endedAt: endedAt, dueAt: 0 }])
+    root.runSessionEndFetch()
+  }
+
+  // Runs the first due lookup; if all are waiting for their retry, sleeps
+  // until the earliest one is due.
+  function runSessionEndFetch() {
+    if (sessionEndProc.running || root.sessionEndQueue.length === 0) return
+    var now = Date.now()
+    var queue = root.sessionEndQueue.slice()
+    var next = -1
+    var earliest = 0
+    for (var i = 0; i < queue.length; i++) {
+      if (queue[i].dueAt <= now) { next = i; break }
+      if (!earliest || queue[i].dueAt < earliest) earliest = queue[i].dueAt
+    }
+    if (next === -1) {
+      sessionEndRetryTimer.interval = Math.max(1000, earliest - now)
+      sessionEndRetryTimer.restart()
+      return
+    }
+    sessionEndProc.session = queue.splice(next, 1)[0]
+    root.sessionEndQueue = queue
+    sessionEndProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000",
+                              "https://www.dr.dk/lyd/playlister/" + sessionEndProc.session.slug]
+    sessionEndProc.running = true
+  }
+
+  Process {
+    id: sessionEndProc
+    property var session: null
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var s = sessionEndProc.session
+        var raw = String(text || "")
+        if (!s) return
+        if (raw) root.logTracks(s.slug, Model.tracksForLog(raw, s.startedAt, s.endedAt))
+        var done = raw && Model.playlistCaughtUp(raw, s.endedAt)
+        if (!done && Date.now() < s.endedAt + root.sessionEndGiveUpMs)
+          root.sessionEndQueue = root.sessionEndQueue.concat([{
+            slug: s.slug, startedAt: s.startedAt, endedAt: s.endedAt,
+            dueAt: Date.now() + root.sessionEndRetryMs
+          }])
+      }
+    }
+    onExited: Qt.callLater(root.runSessionEndFetch)
+  }
+
+  Timer {
+    id: sessionEndRetryTimer
+    onTriggered: root.runSessionEndFetch()
+  }
+
+  // ---- Backfill (manual refresh) ----
+  // Re-logs everything the playing channel aired from a start point up to
+  // now, so gaps left by restarts or DR's listing lag get filled regardless
+  // of what the automatic lookups caught. The anchor is the first track
+  // logged on the channel today (or the session start, if earlier); the
+  // backfillFrom setting widens it to the start of that programme (default)
+  // or clock hour, or keeps it. This deliberately logs what aired during
+  // pauses too. Steps run one at a time: first-track query → current
+  // programme page → one page per earlier programme in the window.
+  readonly property string backfillMode: String(root.setting("backfillFrom", "Programme"))
+  property string backfillSlug: ""
+  property double backfillAnchor: 0
+  property double backfillStart: 0
+  property double backfillSession: 0
+  property double backfillUntil: 0
+  property var backfillPaths: []
+  readonly property bool backfillBusy: backfillQueryProc.running || backfillFetchProc.running
+                                       || root.backfillPaths.length > 0
+
+  function startBackfill() {
+    if (!root.logHistory || !root.playingSlug || root.backfillBusy) return
+    root.backfillSlug = root.playingSlug
+    root.backfillUntil = Date.now()
+    backfillQueryProc.command = ["sqlite3", "-json", "-readonly", "-cmd", ".timeout 2000", root.historyPath,
+                                 Model.historyFirstTodaySql(root.backfillSlug, Model.startOfDaySec(root.backfillUntil))]
+    backfillQueryProc.running = true
+  }
+
+  Process {
+    id: backfillQueryProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var first = Model.parseFirstPlayedMs(text)
+        var session = root.sessionStartedAt || root.backfillUntil
+        root.backfillSession = session
+        root.backfillAnchor = first && first < session ? first : session
+        root.fetchBackfill("", true)
+      }
+    }
+  }
+
+  function fetchBackfill(path, isCurrent) {
+    backfillFetchProc.isCurrent = isCurrent
+    backfillFetchProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000",
+                                 "https://www.dr.dk/lyd/playlister/" + root.backfillSlug + (path ? "/" + path : "")]
+    backfillFetchProc.running = true
+  }
+
+  Process {
+    id: backfillFetchProc
+    property bool isCurrent: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var raw = String(text || "")
+        if (!raw) return
+        // The current page's schedule decides where the window starts.
+        if (backfillFetchProc.isCurrent)
+          root.backfillStart = Model.backfillWindowStart(raw, root.backfillAnchor, root.backfillMode)
+        root.logTracks(root.backfillSlug,
+                       Model.tracksForLog(raw, root.backfillSession, root.backfillUntil, root.backfillStart))
+        if (backfillFetchProc.isCurrent)
+          root.backfillPaths = Model.backfillEpisodePaths(raw, root.backfillStart, root.backfillUntil)
+      }
+    }
+    onExited: Qt.callLater(function() {
+      if (root.backfillPaths.length === 0) return
+      var rest = root.backfillPaths.slice()
+      var next = rest.shift()
+      root.backfillPaths = rest
+      root.fetchBackfill(next, false)
+    })
+  }
+
+  // ---- History view ----
+  property string view: "channels"
+  property var historyRows: []
+  readonly property var groupedHistory: Model.groupHistory(root.historyRows, root.nowClock)
+
+  function setView(next) {
+    if (root.view === next) return
+    root.view = next
+    root.resetCursor()
+    root.exportStatus = ""
+    if (next === "history") {
+      root.nowClock = Date.now()
+      root.loadHistory()
+    }
+  }
+
+  function loadHistory() {
+    if (historyReadProc.running) return
+    historyReadProc.command = ["sqlite3", "-json", "-readonly", "-cmd", ".timeout 2000", root.historyPath,
+                               Model.historySelectSql(100)]
+    historyReadProc.running = true
+  }
+
+  Process {
+    id: historyReadProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.historyRows = Model.parseHistoryRows(text)
+    }
+  }
+
+  // Export reuses the skill's history.py (shipped in this plugin), so the
+  // panel and `dr-lyd.sh export` write the same Markdown.
+  readonly property string historyScript: decodeURIComponent(Qt.resolvedUrl("claude-skill/bin/history.py").toString().replace(/^file:\/\//, ""))
+  property string exportStatus: ""
+
+  function exportHistory() {
+    if (exportProc.running) return
+    root.exportStatus = "Exporting…"
+    exportProc.command = ["python3", root.historyScript, "export"]
+    exportProc.running = true
+  }
+
+  Process {
+    id: exportProc
+    stdout: StdioCollector {
+      id: exportOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: exportErr
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      var msg = exitCode === 0 ? String(exportOut.text || "").trim() : String(exportErr.text || "").trim()
+      root.exportStatus = (exitCode === 0 ? "" : "Export failed: ")
+        + msg.replace(Quickshell.env("HOME"), "~")
+    }
+  }
+
+  function channelTitle(slug) {
+    var channel = root.channelBySlug(slug)
+    return channel ? channel.title : slug
+  }
+
+  function copyText(value) {
+    if (!value) return
+    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
+  }
+
   // The directory is fetched lazily: on first panel open, or when a play
   // request needs it. Nothing contacts dr.dk just because the shell started.
   Component.onCompleted: ensureStateDirProc.running = true
@@ -482,6 +785,14 @@ Panel {
 
   readonly property var cursorTargets: {
     var list = []
+    if (root.view === "history") {
+      for (var h = 0; h < root.groupedHistory.length; h++)
+        for (var r = 0; r < root.groupedHistory[h].items.length; r++) {
+          var row = root.groupedHistory[h].items[r]
+          list.push({ key: "history:" + row.id, row: row })
+        }
+      return list
+    }
     for (var i = 0; i < root.groupedChannels.length; i++) {
       var group = root.groupedChannels[i]
       list.push({ key: "group:" + group.key, group: group })
@@ -535,6 +846,7 @@ Panel {
     var target = root.cursorTargets[root.cursorIndex()]
     if (!root.cursorActive || !target) return
     if (target.group) root.toggleGroup(target.group)
+    else if (target.row) root.copyText(Model.historyTrackText(target.row))
     else root.togglePlay(target.slug)
   }
 
@@ -556,7 +868,7 @@ Panel {
       channelScroll.contentY = Math.max(0, Math.min(maxY, bottom + margin - channelScroll.height))
   }
 
-  readonly property bool refreshBusy: fetchProc.running || nowPlayingProc.running
+  readonly property bool refreshBusy: fetchProc.running || nowPlayingProc.running || root.backfillBusy
 
   KeyboardPanel {
     id: panel
@@ -579,6 +891,11 @@ Panel {
         if (t === "f") root.favoriteCursor()
         else if (t === "r") root.refresh()
         else if (t === "s") root.stop()
+        // h/j/k/l are taken by the key catcher's vim movement, so the tabs
+        // get c(hannels) and p(layed).
+        else if (t === "c") root.setView("channels")
+        else if (t === "p") root.setView("history")
+        else if (t === "e" && root.view === "history") root.exportHistory()
       }
 
       Flickable {
@@ -629,8 +946,58 @@ Panel {
             }
           }
 
+          // Tabs on the left; the History tab's export button on the right
+          // of the same row, with its result on a line of its own below.
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(viewTabs.implicitHeight, exportButton.implicitHeight)
+
+            ButtonGroup {
+              id: viewTabs
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              options: [
+                { value: "channels", label: "Channels", tooltip: "Channels (c)" },
+                { value: "history", label: "History", tooltip: "Tracks you've listened to (p)" }
+              ]
+              value: root.view
+              focusable: false
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.bodySmall
+              onChanged: function(v) { root.setView(v) }
+            }
+
+            PanelActionButton {
+              id: exportButton
+              visible: root.view === "history" && root.historyRows.length > 0
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰈇"
+              tooltipText: exportProc.running ? "Exporting…" : "Export to ~/dr-lyd-history.md (e)"
+              enabled: !exportProc.running
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              onClicked: root.exportHistory()
+            }
+          }
+
           Text {
-            visible: root.fetchError !== "" && root.channels.length === 0
+            visible: root.view === "history" && root.exportStatus !== ""
+            width: parent.width
+            leftPadding: Style.space(6)
+            rightPadding: Style.space(6)
+            textFormat: Text.PlainText
+            text: root.exportStatus
+            color: root.exportStatus.indexOf("Export failed") === 0 ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideMiddle
+          }
+
+          Text {
+            visible: root.view === "channels" && root.fetchError !== "" && root.channels.length === 0
             width: parent.width
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
@@ -641,7 +1008,7 @@ Panel {
           }
 
           Text {
-            visible: root.channels.length === 0 && root.fetchError === ""
+            visible: root.view === "channels" && root.channels.length === 0 && root.fetchError === ""
             textFormat: Text.PlainText
             text: "Loading channels…"
             color: Qt.darker(root.bar.foreground, 1.4)
@@ -651,7 +1018,7 @@ Panel {
 
           // ---- Grouped channel list ----
           Repeater {
-            model: root.groupedChannels
+            model: root.view === "channels" ? root.groupedChannels : []
 
             Column {
               id: groupColumn
@@ -778,6 +1145,106 @@ Panel {
                     fontFamily: root.bar.fontFamily
                     onHovered: function(on) { if (on) root.setCursor(channelRow.cursorKey) }
                     onClicked: root.toggleFavorite(channelRow.modelData.slug)
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- History: tracks from past listening sessions, per day ----
+          Text {
+            visible: root.view === "history" && root.historyRows.length === 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: root.logHistory ? "No history yet — tracks are logged while a channel plays."
+                                  : "History logging is off (logHistory)."
+            color: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Repeater {
+            model: root.view === "history" ? root.groupedHistory : []
+
+            Column {
+              id: dayColumn
+              required property var modelData
+              width: parent.width
+              spacing: Style.space(4)
+
+              PanelSeparator {
+                foreground: root.bar.foreground
+              }
+
+              PanelSectionHeader {
+                x: Style.space(6)
+                text: dayColumn.modelData.label.toUpperCase()
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+
+              Repeater {
+                model: dayColumn.modelData.items
+
+                CursorSurface {
+                  id: historyRow
+                  required property var modelData
+                  readonly property string cursorKey: "history:" + modelData.id
+                  width: parent.width
+                  implicitHeight: historyText.implicitHeight + Style.space(6)
+                  hasCursor: root.hasCursor(cursorKey)
+                  onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(historyRow)
+                  foreground: root.bar.foreground
+
+                  Text {
+                    id: historyTime
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(6)
+                    anchors.top: historyText.top
+                    textFormat: Text.PlainText
+                    text: Model.historyTimeText(historyRow.modelData)
+                    color: Qt.darker(root.bar.foreground, 1.4)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Column {
+                    id: historyText
+                    anchors.left: historyTime.right
+                    anchors.leftMargin: Style.space(8)
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                      width: parent.width
+                      textFormat: Text.PlainText
+                      text: Model.historyTrackText(historyRow.modelData)
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.body
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      width: parent.width
+                      textFormat: Text.PlainText
+                      text: root.channelTitle(historyRow.modelData.channel)
+                        + (historyRow.modelData.programme ? " · " + historyRow.modelData.programme : "")
+                      color: Qt.darker(root.bar.foreground, 1.4)
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      elide: Text.ElideRight
+                    }
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: if (containsMouse) root.setCursor(historyRow.cursorKey)
+                    onClicked: root.copyText(Model.historyTrackText(historyRow.modelData))
                   }
                 }
               }

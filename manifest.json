@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "subjektivdk.dr-lyd",
   "name": "DR Lyd",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "Martin",
   "license": "MIT",
   "description": "Play DR's radio channels (P1-P8, regional P4/P5, LYD ekstra) straight from the bar.",
@@ -21,7 +21,10 @@
     "defaultSection": "right",
     "defaults": {
       "defaultChannel": "p6beat",
-      "quality": "High"
+      "quality": "High",
+      "logHistory": true,
+      "historyDays": 0,
+      "backfillFrom": "Programme"
     },
     "schema": [
       {
@@ -38,6 +41,31 @@
         "options": ["Low", "High"],
         "defaultValue": "High",
         "description": "Preferred ICY MP3 bitrate. Falls back to HLS if ICY is unavailable."
+      },
+      {
+        "key": "logHistory",
+        "type": "boolean",
+        "label": "Log listening history",
+        "defaultValue": true,
+        "description": "Save the tracks you listen to in ~/.local/state/omarchy/dr-lyd/history.sqlite (shown under History in the panel)."
+      },
+      {
+        "key": "historyDays",
+        "type": "integer",
+        "label": "Keep history (days)",
+        "min": 0,
+        "max": 3650,
+        "step": 1,
+        "defaultValue": 0,
+        "description": "Delete logged tracks older than this many days when the shell starts. 0 keeps everything."
+      },
+      {
+        "key": "backfillFrom",
+        "type": "enum",
+        "label": "Refresh fills history from",
+        "options": ["Programme", "Hour", "Listened"],
+        "defaultValue": "Programme",
+        "description": "How far back the refresh button fills in the history: the start of the programme you first listened to today (e.g. all of Morgenbeatet), the top of that hour, or only from the first track you heard."
       }
     ]
   }

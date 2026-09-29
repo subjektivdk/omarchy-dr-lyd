@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<USAGE
-Usage: dr-lyd.sh <play <slug>|stop|status|list|playlist [slug] [minutes]>
+Usage: dr-lyd.sh <play <slug>|stop|status|list|playlist [slug] [minutes]|history [days] [slug]|search <text> [days] [slug]|export [file] [days] [slug]>
 
   play <slug>          Start playing the given DR channel (slug from 'list').
   stop                 Stop playback.
@@ -12,6 +12,16 @@ Usage: dr-lyd.sh <play <slug>|stop|status|list|playlist [slug] [minutes]>
   playlist [slug] [minutes]
                        Recent tracks (HH:MM<TAB>artist – title), newest last.
                        Defaults to the currently playing channel and 60 min.
+  history [days] [slug]
+                       Tracks you actually listened to, from the plugin's own
+                       log (YYYY-MM-DD HH:MM<TAB>slug<TAB>artist – title<TAB>programme),
+                       oldest first. Defaults to the last 1 day; 0 = everything.
+  search <text> [days] [slug]
+                       Same, only rows whose artist, title or programme contain
+                       <text> (case-insensitive). Defaults to all history.
+  export [file] [days] [slug]
+                       Write the history as Markdown, grouped per day, newest
+                       first. Defaults to ~/dr-lyd-history.md and all history.
 USAGE
 }
 
@@ -42,6 +52,16 @@ case "$1" in
       [[ -n $slug && $slug != "stopped" ]] || { echo "no channel playing — specify a slug" >&2; exit 1; }
     fi
     python3 "$BIN_DIR/playlist.py" "$slug" "$minutes"
+    ;;
+  history)
+    python3 "$BIN_DIR/history.py" list "${@:2}"
+    ;;
+  search)
+    [[ $# -ge 2 ]] || { usage >&2; exit 1; }
+    python3 "$BIN_DIR/history.py" search "${@:2}"
+    ;;
+  export)
+    python3 "$BIN_DIR/history.py" export "${@:2}"
     ;;
   -h|--help)
     usage
