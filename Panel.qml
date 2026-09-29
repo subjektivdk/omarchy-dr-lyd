@@ -765,6 +765,22 @@ Panel {
     return channel ? channel.title : slug
   }
 
+  // The copied row swaps its channel · programme line for a confirmation
+  // for a moment (mouse click and Enter alike).
+  property int copiedRowId: -1
+
+  function copyHistoryRow(row) {
+    root.copyText(Model.historyTrackText(row))
+    root.copiedRowId = row.id
+    copiedTimer.restart()
+  }
+
+  Timer {
+    id: copiedTimer
+    interval: 1500
+    onTriggered: root.copiedRowId = -1
+  }
+
   function copyText(value) {
     if (!value) return
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
@@ -846,7 +862,7 @@ Panel {
     var target = root.cursorTargets[root.cursorIndex()]
     if (!root.cursorActive || !target) return
     if (target.group) root.toggleGroup(target.group)
-    else if (target.row) root.copyText(Model.historyTrackText(target.row))
+    else if (target.row) root.copyHistoryRow(target.row)
     else root.togglePlay(target.slug)
   }
 
@@ -1230,9 +1246,11 @@ Panel {
                     Text {
                       width: parent.width
                       textFormat: Text.PlainText
-                      text: root.channelTitle(historyRow.modelData.channel)
-                        + (historyRow.modelData.programme ? " · " + historyRow.modelData.programme : "")
-                      color: Qt.darker(root.bar.foreground, 1.4)
+                      readonly property bool copied: root.copiedRowId === historyRow.modelData.id
+                      text: copied ? "󰄬 Copied to clipboard"
+                        : root.channelTitle(historyRow.modelData.channel)
+                          + (historyRow.modelData.programme ? " · " + historyRow.modelData.programme : "")
+                      color: copied ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.bodySmall
                       elide: Text.ElideRight
@@ -1244,7 +1262,7 @@ Panel {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onContainsMouseChanged: if (containsMouse) root.setCursor(historyRow.cursorKey)
-                    onClicked: root.copyText(Model.historyTrackText(historyRow.modelData))
+                    onClicked: root.copyHistoryRow(historyRow.modelData)
                   }
                 }
               }
