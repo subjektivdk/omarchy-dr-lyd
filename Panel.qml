@@ -719,7 +719,7 @@ Panel {
   function loadHistory() {
     if (historyReadProc.running) return
     historyReadProc.command = ["sqlite3", "-json", "-readonly", "-cmd", ".timeout 2000", root.historyPath,
-                               Model.historySelectSql(100)]
+                               Model.historySelectSql(500)]
     historyReadProc.running = true
   }
 
@@ -727,7 +727,10 @@ Panel {
     id: historyReadProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.historyRows = Model.parseHistoryRows(text)
+      onStreamFinished: {
+        root.historyRows = Model.parseHistoryRows(text)
+        root.pruneDayState()
+      }
     }
   }
 
@@ -736,10 +739,19 @@ Panel {
   readonly property string historyScript: decodeURIComponent(Qt.resolvedUrl("claude-skill/bin/history.py").toString().replace(/^file:\/\//, ""))
   property string exportStatus: ""
 
+  // Exports what is expanded: each expanded day in full (read from the
+  // database, so a day older than the rows loaded here is still complete).
   function exportHistory() {
     if (exportProc.running) return
+    var dates = []
+    for (var i = 0; i < root.groupedHistory.length; i++)
+      if (root.isGroupExpanded(root.groupedHistory[i])) dates.push(root.groupedHistory[i].day)
+    if (dates.length === 0) {
+      root.exportStatus = "Expand a day to export it"
+      return
+    }
     root.exportStatus = "Exporting…"
-    exportProc.command = ["python3", root.historyScript, "export"]
+    exportProc.command = ["python3", root.historyScript, "export", "--dates", dates.join(",")]
     exportProc.running = true
   }
 
@@ -758,6 +770,44 @@ Panel {
       root.exportStatus = (exitCode === 0 ? "" : "Export failed: ")
         + msg.replace(Quickshell.env("HOME"), "~")
     }
+  }
+
+  // Collapse state for days lives in groupState as "day:<date>"; drop the
+  // entries for days no longer in the history so the state file doesn't
+  // grow by one key per day forever.
+  function pruneDayState() {
+    var present = {}
+    for (var i = 0; i < root.groupedHistory.length; i++) present[root.groupedHistory[i].key] = true
+    var next = {}
+    var changed = false
+    for (var key in root.groupState) {
+      if (key.indexOf("day:") === 0 && !present[key]) changed = true
+      else next[key] = root.groupState[key]
+    }
+    if (!changed) return
+    root.groupState = next
+    root.scheduleStateSave()
+  }
+
+  // ---- Clear history (x, or the trash button; confirmed in a dialog) ----
+  property bool clearConfirmOpen: false
+
+  function askClearHistory() {
+    if (root.view !== "history" || root.historyRows.length === 0) return
+    root.clearConfirmOpen = true
+    clearConfirm.selectedIndex = 0
+    clearConfirm.forceActiveFocus()
+  }
+
+  function closeClearConfirm() {
+    root.clearConfirmOpen = false
+    keyCatcher.forceActiveFocus()
+  }
+
+  function confirmClearHistory() {
+    root.closeClearConfirm()
+    root.exportStatus = ""
+    root.queueHistoryWrite(Model.historyClearSql())
   }
 
   function channelTitle(slug) {
@@ -802,11 +852,13 @@ Panel {
   readonly property var cursorTargets: {
     var list = []
     if (root.view === "history") {
-      for (var h = 0; h < root.groupedHistory.length; h++)
-        for (var r = 0; r < root.groupedHistory[h].items.length; r++) {
-          var row = root.groupedHistory[h].items[r]
-          list.push({ key: "history:" + row.id, row: row })
-        }
+      for (var h = 0; h < root.groupedHistory.length; h++) {
+        var day = root.groupedHistory[h]
+        list.push({ key: "group:" + day.key, group: day })
+        if (!root.isGroupExpanded(day)) continue
+        for (var r = 0; r < day.items.length; r++)
+          list.push({ key: "history:" + day.items[r].id, row: day.items[r] })
+      }
       return list
     }
     for (var i = 0; i < root.groupedChannels.length; i++) {
@@ -901,7 +953,9 @@ Panel {
       anchors.fill: parent
       onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
       onActivateRequested: root.activateCursor()
+      blocked: root.clearConfirmOpen
       onCloseRequested: root.close()
+      onDeleteRequested: root.askClearHistory()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "f") root.favoriteCursor()
@@ -912,6 +966,20 @@ Panel {
         else if (t === "c") root.setView("channels")
         else if (t === "p") root.setView("history")
         else if (t === "e" && root.view === "history") root.exportHistory()
+      }
+
+      ConfirmDialog {
+        id: clearConfirm
+        anchors.fill: parent
+        z: 10
+        opened: root.clearConfirmOpen
+        message: "Delete the entire listening history?"
+        confirmText: "Delete"
+        foreground: root.bar.foreground
+        fontFamily: root.bar.fontFamily
+        Keys.onPressed: function(event) { if (clearConfirm.handleKey(event)) event.accepted = true }
+        onCanceled: root.closeClearConfirm()
+        onConfirmed: root.confirmClearHistory()
       }
 
       Flickable {
@@ -985,13 +1053,27 @@ Panel {
             }
 
             PanelActionButton {
+              id: clearButton
+              visible: exportButton.visible
+              anchors.right: exportButton.left
+              anchors.rightMargin: Style.space(4)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰩹"
+              tooltipText: "Clear history (x)"
+              foreground: Qt.darker(root.bar.foreground, 1.4)
+              hoverColor: root.bar.urgent
+              fontFamily: root.bar.fontFamily
+              onClicked: root.askClearHistory()
+            }
+
+            PanelActionButton {
               id: exportButton
               visible: root.view === "history" && root.historyRows.length > 0
               anchors.right: parent.right
               anchors.rightMargin: Style.space(6)
               anchors.verticalCenter: parent.verticalCenter
               iconText: "󰈇"
-              tooltipText: exportProc.running ? "Exporting…" : "Export to ~/dr-lyd-history.md (e)"
+              tooltipText: exportProc.running ? "Exporting…" : "Export expanded days to ~/dr-lyd-history.md (e)"
               enabled: !exportProc.running
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
@@ -1186,6 +1268,7 @@ Panel {
             Column {
               id: dayColumn
               required property var modelData
+              readonly property bool expanded: root.isGroupExpanded(modelData)
               width: parent.width
               spacing: Style.space(4)
 
@@ -1193,15 +1276,53 @@ Panel {
                 foreground: root.bar.foreground
               }
 
-              PanelSectionHeader {
-                x: Style.space(6)
-                text: dayColumn.modelData.label.toUpperCase()
+              // Same heading + +/− as the channel groups; collapsed days
+              // show how many tracks they hold.
+              CursorSurface {
+                id: dayHeader
+                readonly property string cursorKey: "group:" + dayColumn.modelData.key
+                width: parent.width
+                implicitHeight: Math.max(dayLabel.implicitHeight, dayToggle.implicitHeight) + Style.space(4)
+                hasCursor: root.hasCursor(cursorKey)
+                onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(dayHeader)
                 foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
+
+                PanelSectionHeader {
+                  id: dayLabel
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: dayColumn.modelData.label.toUpperCase()
+                    + (dayColumn.expanded ? "" : " (" + dayColumn.modelData.items.length + ")")
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: if (containsMouse) root.setCursor(dayHeader.cursorKey)
+                  onClicked: root.toggleGroup(dayColumn.modelData)
+                }
+
+                PanelActionButton {
+                  id: dayToggle
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: dayColumn.expanded ? "󰍴" : "󰐕"
+                  tooltipText: dayColumn.expanded ? "Collapse" : "Expand"
+                  foreground: Qt.darker(root.bar.foreground, 1.4)
+                  hoverColor: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  onHovered: function(on) { if (on) root.setCursor(dayHeader.cursorKey) }
+                  onClicked: root.toggleGroup(dayColumn.modelData)
+                }
               }
 
               Repeater {
-                model: dayColumn.modelData.items
+                model: dayColumn.expanded ? dayColumn.modelData.items : []
 
                 CursorSurface {
                   id: historyRow

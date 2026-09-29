@@ -15,9 +15,11 @@ regional P4/P5 channels) straight from the Omarchy bar.
   group, `f` toggles favorite, `r` refreshes, `s` stops, `c`/`p` switch
   between the Channels and History tabs, Esc closes
 - **History**: the panel's *History* tab lists the tracks you have listened
-  to, grouped by day, with channel and programme. Click or Enter copies
-  "Artist – Title"; the export button (`e`) writes it all to
-  `~/dr-lyd-history.md`. Logged to SQLite, see [Listening history](#listening-history)
+  to, grouped by day, with channel and programme. Earlier days start
+  collapsed behind a +/− like the channel groups. Click or Enter copies
+  "Artist – Title"; the export button (`e`) writes the expanded days to
+  `~/dr-lyd-history.md`, and the trash button (`x`) clears the history
+  after a confirmation. Logged to SQLite, see [Listening history](#listening-history)
 - Middle-click the icon to start/stop the last played channel
 - Hovering the icon shows the channel and the track currently playing
   (artist – title; talk channels like P1 show only the channel). If DR's
@@ -126,6 +128,7 @@ without writing any SQL:
 history.py list 7 p6beat                  # last week on P6 Beat
 history.py search "sort sol"              # artist, title or programme
 history.py export ~/dr-lyd-history.md 30  # Markdown, per day; 0 days = everything
+history.py export "" 0 "" --dates 2026-09-29,2026-09-28  # only those days
 ```
 
 ## Remote control

@@ -364,6 +364,10 @@ function historyInsertSql(slug, tracks) {
     "FROM json_each(" + sqlString(JSON.stringify(rows)) + ");"
 }
 
+function historyClearSql() {
+  return HISTORY_SCHEMA_SQL + "DELETE FROM plays;"
+}
+
 function historyPruneSql(days) {
   var n = Math.floor(Number(days) || 0)
   if (n <= 0) return ""
@@ -405,7 +409,9 @@ function dayKey(d) {
 }
 
 // Rows arrive newest first; they're bucketed per local calendar day under
-// "Today" / "Yesterday" / "Mon 28 Sep" headings, keeping that order.
+// "Today" / "Yesterday" / "Mon 28 Sep" headings, keeping that order. Days
+// share the channel groups' collapse logic (key + defaultCollapsed): only
+// today starts expanded.
 function groupHistory(rows, nowMs) {
   var now = new Date(nowMs)
   var today = dayKey(now)
@@ -416,12 +422,12 @@ function groupHistory(rows, nowMs) {
   var current = null
   for (var i = 0; i < rows.length; i++) {
     var d = new Date(Number(rows[i].played_at) * 1000)
-    var key = dayKey(d)
-    if (!current || current.key !== key) {
-      var label = key === today ? "Today"
-        : key === yesterday ? "Yesterday"
+    var day = dayKey(d)
+    if (!current || current.day !== day) {
+      var label = day === today ? "Today"
+        : day === yesterday ? "Yesterday"
         : days[d.getDay()] + " " + d.getDate() + " " + months[d.getMonth()]
-      current = { key: key, label: label, items: [] }
+      current = { key: "day:" + day, day: day, label: label, items: [], defaultCollapsed: day !== today }
       groups.push(current)
     }
     current.items.push(rows[i])

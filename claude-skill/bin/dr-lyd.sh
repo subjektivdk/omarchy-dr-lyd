@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<USAGE
-Usage: dr-lyd.sh <play <slug>|stop|status|list|playlist [slug] [minutes]|history [days] [slug]|search <text> [days] [slug]|export [file] [days] [slug]>
+Usage: dr-lyd.sh <play <slug>|stop|status|list|playlist [slug] [minutes]|history [days] [slug]|search <text> [days] [slug]|export [file] [days] [slug] [--dates ...]|clear --yes>
 
   play <slug>          Start playing the given DR channel (slug from 'list').
   stop                 Stop playback.
@@ -21,7 +21,9 @@ Usage: dr-lyd.sh <play <slug>|stop|status|list|playlist [slug] [minutes]|history
                        <text> (case-insensitive). Defaults to all history.
   export [file] [days] [slug]
                        Write the history as Markdown, grouped per day, newest
-                       first. Defaults to ~/dr-lyd-history.md and all history.
+                       first. Defaults to ~/dr-lyd-history.md and all history;
+                       --dates YYYY-MM-DD,... limits it to those days.
+  clear --yes          Delete the entire listening history.
 USAGE
 }
 
@@ -62,6 +64,9 @@ case "$1" in
     ;;
   export)
     python3 "$BIN_DIR/history.py" export "${@:2}"
+    ;;
+  clear)
+    python3 "$BIN_DIR/history.py" clear "${@:2}"
     ;;
   -h|--help)
     usage

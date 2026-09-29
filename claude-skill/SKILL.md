@@ -17,7 +17,8 @@ All via `~/.claude/skills/dr-lyd/bin/dr-lyd.sh`:
 - `dr-lyd.sh status` — shows what's playing now (`slug<TAB>title`, or `stopped`).
 - `dr-lyd.sh history [days] [slug]` — tracks the user actually listened to, from the plugin's own sqlite log: `YYYY-MM-DD HH:MM<TAB>slug<TAB>artist – title<TAB>programme` lines, oldest first. `days` defaults to 1 (`0` = everything); `slug` filters to one channel.
 - `dr-lyd.sh search <text> [days] [slug]` — same output, only rows whose artist, title or programme contain `<text>` (case-insensitive for ASCII; `%`/`_` are literal). Searches all history by default.
-- `dr-lyd.sh export [file] [days] [slug]` — writes the history as Markdown (one `##` heading per day, days and tracks newest first, table of time/channel/artist/title/programme). Defaults to `~/dr-lyd-history.md` and all history. Prints `exported N tracks to <file>`.
+- `dr-lyd.sh clear --yes` — deletes the entire listening history. Irreversible: only run it when the user has explicitly asked to clear/delete their radio history in this conversation, and confirm with them first unless they already said to go ahead. Suggest `export` first if they might want a copy.
+- `dr-lyd.sh export [file] [days] [slug]` — writes the history as Markdown (one `##` heading per day, days and tracks newest first, table of time/channel/artist/title/programme). Defaults to `~/dr-lyd-history.md` and all history; add `--dates YYYY-MM-DD,...` to export only those days (the panel's export button does this with the days expanded there). Prints `exported N tracks to <file>`.
 - `dr-lyd.sh playlist [slug] [minutes]` — recent tracks as `HH:MM<TAB>artist – title` lines, oldest first. `slug` defaults to whatever's currently playing (via `status`); `minutes` defaults to 60. Talk channels (P1, P2) and LYD ekstra have no playlist and print a note instead.
 
 ## Switching channel

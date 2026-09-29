@@ -4,10 +4,13 @@
 
   history.py list   [days] [slug]           tab-separated rows, oldest first
   history.py search <text> [days] [slug]    same, filtered on artist/title/programme
-  history.py export [file] [days] [slug]    Markdown, per day, newest first
+  history.py export [file] [days] [slug] [--dates YYYY-MM-DD,...]
+                                            Markdown, per day, newest first;
+                                            --dates limits it to those days
+  history.py clear --yes                    delete the entire history
 
-days = 0 means everything. The database is opened read-only; the plugin is
-the only writer."""
+days = 0 means everything. The database is opened read-only except by
+`clear`; otherwise the plugin is the only writer."""
 import datetime
 import os
 import sqlite3
@@ -114,15 +117,30 @@ def md_cell(value):
     return str(value or "").replace("|", "\\|").replace("\n", " ")
 
 
-def export(path, days, slug):
+def parse_dates(value):
+    try:
+        return sorted({datetime.date.fromisoformat(d.strip()) for d in value.split(",") if d.strip()}, reverse=True)
+    except ValueError:
+        die("--dates takes comma-separated YYYY-MM-DD dates")
+
+
+def export(path, days, slug, dates=None):
     rows = fetch(days, slug)
     if rows is None:
         die(f"no listening history yet ({DB} doesn't exist)")
+    if dates is not None:
+        wanted = set(dates)
+        rows = [r for r in rows if local(r[0]).date() in wanted]
+        if not rows:
+            die("no tracks on the selected days")
     titles = channel_titles()
     now = datetime.datetime.now()
     lines = ["# DR Lyd listening history", ""]
-    scope = [f"{len(rows)} track{'' if len(rows) == 1 else 's'}",
-             f"last {days} day{'' if days == 1 else 's'}" if days > 0 else "all history"]
+    if dates is not None:
+        span = ", ".join(d.strftime("%-d %b %Y") for d in dates)
+    else:
+        span = f"last {days} day{'' if days == 1 else 's'}" if days > 0 else "all history"
+    scope = [f"{len(rows)} track{'' if len(rows) == 1 else 's'}", span]
     if slug:
         scope.append(titles.get(slug, slug))
     lines.append(f"Exported {now.strftime('%Y-%m-%d %H:%M')} · " + " · ".join(scope))
@@ -163,11 +181,31 @@ def main():
         days = parse_days(rest[1] if len(rest) > 1 else None, 0)
         slug = rest[2] if len(rest) > 2 else ""
         print_rows(fetch(days, slug, text), days, slug, text)
+    elif cmd == "clear":
+        if rest != ["--yes"]:
+            die("refusing to clear without --yes (deletes the entire listening history)")
+        if not os.path.exists(DB):
+            print("no listening history to clear")
+            return
+        con = sqlite3.connect(DB, timeout=2)
+        try:
+            with con:
+                n = con.execute("DELETE FROM plays").rowcount
+        finally:
+            con.close()
+        print(f"deleted {n} tracks from the listening history")
     elif cmd == "export":
+        dates = None
+        if "--dates" in rest:
+            i = rest.index("--dates")
+            if i + 1 >= len(rest):
+                die("--dates needs a value")
+            dates = parse_dates(rest[i + 1])
+            rest = rest[:i] + rest[i + 2:]
         path = os.path.expanduser(rest[0]) if rest and rest[0] else DEFAULT_EXPORT
         days = parse_days(rest[1] if len(rest) > 1 else None, 0)
         slug = rest[2] if len(rest) > 2 else ""
-        export(path, days, slug)
+        export(path, days, slug, dates)
     else:
         die(__doc__)
 
