@@ -168,6 +168,13 @@ scripts/test.sh         # validate, qmllint, Model.js + history.py tests
 omarchy restart shell   # QML changes in bar widgets require a restart
 ```
 
+Code layout: `BarWidget.qml` is the bar icon and loads `Panel.qml`, which
+holds the UI, the persisted state and the IPC handler. The logic lives in
+two non-visual components the panel wires together — `Player.qml`
+(channel directory, mpv, now-playing, listening session) and `History.qml`
+(the SQLite log, session-end lookups, backfill, export, clear) — and the
+parsing in `Model.js`.
+
 The tests run offline against synthetic dr.dk pages and a scratch
 database; they need `qt6-declarative` (`qmllint`, `qmltestrunner`),
 `python3` and `sqlite3`.
