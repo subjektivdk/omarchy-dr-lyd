@@ -37,6 +37,7 @@ regional P4/P5 channels) straight from the Omarchy bar.
 - `mpv` (playback)
 - `curl` (fetches the channel list)
 - `sqlite3` (listening history; part of Arch's `sqlite` package, installed by default)
+- `python3` (history export, and the Claude Code skill's history commands)
 - `mpv-mpris` (optional — MPRIS integration with `omarchy.media` and media keys)
 
 ```bash
@@ -137,6 +138,7 @@ The plugin can be controlled from outside via the Omarchy shell's IPC, without
 opening the panel:
 
 ```bash
+omarchy-shell subjektivdk.dr-lyd toggle         # open/close the panel (also open, close)
 omarchy-shell subjektivdk.dr-lyd list           # slug<TAB>title for all known channels
 omarchy-shell subjektivdk.dr-lyd play <slug>     # switch to a channel, e.g. p1, p3, p6beat
 omarchy-shell subjektivdk.dr-lyd stop            # stop playback

@@ -347,11 +347,17 @@ Panel {
 
   // External control (e.g. `omarchy-shell subjektivdk.dr-lyd play p1`), for
   // scripts/agents that want to switch channel without touching the panel.
-  // Deliberately separate from the base Panel's open/close/toggle IPC
-  // (manageIpc: false above), since this target is about playback, not the
-  // panel's visibility.
+  // manageIpc: false above so this panel can own the single IpcHandler the
+  // target permits, like the built-in power/monitor panels: it carries the
+  // usual open/close/toggle verbs plus the playback methods.
   IpcHandler {
     target: "subjektivdk.dr-lyd"
+    // Panel visibility, same verbs as the built-in panels' targets.
+    function open(): void { root.openFromHotkey() }
+    function close(): void { root.close() }
+    function show(): void { root.openFromHotkey() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
     function play(slug: string): string {
       if (root.channelBySlug(slug)) {
         root.switchTo(slug)
@@ -741,15 +747,20 @@ Panel {
 
   // Exports what is expanded: each expanded day in full (read from the
   // database, so a day older than the rows loaded here is still complete).
-  function exportHistory() {
-    if (exportProc.running) return
+  readonly property var expandedDays: {
     var dates = []
     for (var i = 0; i < root.groupedHistory.length; i++)
       if (root.isGroupExpanded(root.groupedHistory[i])) dates.push(root.groupedHistory[i].day)
-    if (dates.length === 0) {
-      root.exportStatus = "Expand a day to export it"
-      return
-    }
+    return dates
+  }
+  // With every day collapsed there is nothing to export; say so for as long
+  // as that lasts instead of only after a failed attempt.
+  readonly property string exportHint: root.expandedDays.length === 0 ? "Expand a day to export it" : ""
+
+  function exportHistory() {
+    if (exportProc.running) return
+    var dates = root.expandedDays
+    if (dates.length === 0) return
     root.exportStatus = "Exporting…"
     exportProc.command = ["python3", root.historyScript, "export", "--dates", dates.join(",")]
     exportProc.running = true
@@ -1074,7 +1085,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               iconText: "󰈇"
               tooltipText: exportProc.running ? "Exporting…" : "Export expanded days to ~/dr-lyd-history.md (e)"
-              enabled: !exportProc.running
+              enabled: !exportProc.running && root.expandedDays.length > 0
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               onClicked: root.exportHistory()
@@ -1082,12 +1093,14 @@ Panel {
           }
 
           Text {
-            visible: root.view === "history" && root.exportStatus !== ""
+            visible: root.view === "history" && root.historyRows.length > 0
+                     && (root.exportStatus !== "" || root.exportHint !== "")
             width: parent.width
             leftPadding: Style.space(6)
             rightPadding: Style.space(6)
             textFormat: Text.PlainText
-            text: root.exportStatus
+            // A result from the last export wins; otherwise the standing hint.
+            text: root.exportStatus || root.exportHint
             color: root.exportStatus.indexOf("Export failed") === 0 ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
