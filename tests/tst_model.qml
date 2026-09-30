@@ -227,4 +227,14 @@ TestCase {
             null, "heartbeat before start is rejected")
     compare(Model.parseStateFile("not json").favorites.length, 0)
   }
+
+  function test_plainTooltipText_neutralisesMarkup() {
+    var out = Model.plainTooltipText("<img src=\"https://example.com/x.png\"> Sort Sol")
+    verify(out.indexOf("<") < 0 && out.indexOf(">") < 0, "no angle brackets survive")
+    compare(Model.plainTooltipText("P6 Beat"), "P6 Beat")
+    compare(Model.plainTooltipText("Sigur Rós – Hoppípolla"), "Sigur Rós – Hoppípolla")
+    compare(Model.plainTooltipText("a\u0000b\u001bc"), "abc", "control characters are dropped")
+    compare(Model.plainTooltipText(null), "")
+    compare(Model.plainTooltipText(new Array(500).join("x")).length, 200)
+  }
 }

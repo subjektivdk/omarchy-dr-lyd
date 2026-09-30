@@ -15,6 +15,19 @@ function extractNextData(html) {
   }
 }
 
+// Text from DR ends up in the host's tooltip, which renders with Qt's
+// markup-detecting Text: a title such as `<img src="https://…">` would make
+// the shell fetch that URL. Angle brackets are swapped for look-alikes so
+// nothing can start a tag, whichever way the tooltip renders; control
+// characters go, and the length is capped.
+function plainTooltipText(text) {
+  return String(text === undefined || text === null ? "" : text)
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+    .replace(/</g, "\u2039")
+    .replace(/>/g, "\u203a")
+    .slice(0, 200)
+}
+
 function isRadioChannel(entry) {
   if (!entry || typeof entry !== "object") return false
   if (!entry.slug || !Array.isArray(entry.audioAssets) || entry.audioAssets.length === 0) return false

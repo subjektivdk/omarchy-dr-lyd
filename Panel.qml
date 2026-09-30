@@ -136,28 +136,42 @@ Panel {
     stateSaveTimer.restart()
   }
 
+  // The state file lives in a user-writable directory, so it is read and
+  // written by scripts/state.py (no FIFOs, symlinks or oversized files, and
+  // every step relative to one directory handle) instead of a FileView.
+  readonly property string stateScript: decodeURIComponent(Qt.resolvedUrl("scripts/state.py").toString().replace(/^file:\/\//, ""))
+
   function flushState() {
-    stateFile.setText(JSON.stringify({
+    if (stateWriteProc.running) {
+      // Only one write at a time; run again once this one has finished.
+      root.stateDirty = true
+      return
+    }
+    root.stateDirty = false
+    stateWriteProc.command = ["python3", root.stateScript, "write", root.stateDir, JSON.stringify({
       favorites: root.favorites,
       lastPlayed: root.lastPlayed,
       groups: root.groupState,
       openSession: player.openSession
-    }, null, 2) + "\n")
+    }, null, 2) + "\n"]
+    stateWriteProc.running = true
+  }
+
+  property bool stateDirty: false
+
+  Process {
+    id: stateWriteProc
+    onExited: if (root.stateDirty) root.flushState()
   }
 
   Process {
-    id: ensureStateDirProc
-    command: ["mkdir", "-p", root.stateDir]
-  }
-
-  FileView {
-    id: stateFile
-    path: root.statePath
-    watchChanges: false
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.loadState(text())
-    onLoadFailed: root.loadState("")
+    id: stateReadProc
+    command: ["python3", root.stateScript, "read", root.stateDir]
+    stdout: StdioCollector {
+      id: stateReadOut
+      waitForEnd: true
+      onStreamFinished: root.loadState(stateReadOut.text)
+    }
   }
 
   Timer {
@@ -362,7 +376,7 @@ Panel {
 
   // The directory is fetched lazily: on first panel open, or when a play
   // request needs it. Nothing contacts dr.dk just because the shell started.
-  Component.onCompleted: ensureStateDirProc.running = true
+  Component.onCompleted: stateReadProc.running = true
 
 
   // ---- Keyboard + mouse cursor ----

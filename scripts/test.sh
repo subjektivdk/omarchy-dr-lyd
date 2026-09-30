@@ -29,6 +29,7 @@ ln -s "$shell_dir" "$imports/qs"
 QT_QPA_PLATFORM=offscreen "$qt_bin/qmltestrunner" -input tests -import . -o -,txt
 
 PYTHONDONTWRITEBYTECODE=1 python3 tests/test_history.py
+PYTHONDONTWRITEBYTECODE=1 python3 tests/test_state.py
 
 bash -n claude-skill/bin/dr-lyd.sh
 

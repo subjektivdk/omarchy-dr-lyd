@@ -3,6 +3,7 @@ import QtQuick.Effects
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
 BarWidget {
   id: root
@@ -87,8 +88,8 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     tooltipText: root.playing
-      ? root.playingTitle + (root.nowPlayingText
-          ? "\n" + root.nowPlayingText + (root.nowPlayingAgeText ? " (" + root.nowPlayingAgeText + ")" : "")
+      ? Model.plainTooltipText(root.playingTitle) + (root.nowPlayingText
+          ? "\n" + Model.plainTooltipText(root.nowPlayingText) + (root.nowPlayingAgeText ? " (" + root.nowPlayingAgeText + ")" : "")
           : "")
       : "DR Lyd — click for channels"
 
