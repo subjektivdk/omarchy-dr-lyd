@@ -139,7 +139,7 @@ Panel {
   // The state file lives in a user-writable directory, so it is read and
   // written by scripts/state.py (no FIFOs, symlinks or oversized files, and
   // every step relative to one directory handle) instead of a FileView.
-  readonly property string stateScript: decodeURIComponent(Qt.resolvedUrl("scripts/state.py").toString().replace(/^file:\/\//, ""))
+  readonly property string stateScript: Model.localPath(Qt.resolvedUrl("scripts/state.py"))
 
   function flushState() {
     if (stateWriteProc.running) {
@@ -208,7 +208,10 @@ Panel {
     keepDays: root.historyDays
     backfillMode: root.backfillMode
     onWritten: if (root.view === "history") history.load()
-    onLoaded: root.pruneDayState()
+    onLoaded: {
+      root.historyClock = Date.now()
+      root.pruneDayState()
+    }
   }
 
   readonly property var channels: player.channels
@@ -282,16 +285,28 @@ Panel {
   // ---- History view ----
   property string view: "channels"
   readonly property var historyRows: history.rows
-  readonly property var groupedHistory: Model.groupHistory(history.rows, player.nowClock)
+  readonly property var groupedHistory: Model.groupHistory(history.rows, root.historyClock)
+  // "Today"/"Yesterday" are relative to this clock. It is the panel's own,
+  // not the player's (which only ticks while a channel plays): set on every
+  // load and ticking each minute while the History tab is showing, so the
+  // labels move on at midnight with nothing playing too.
+  property double historyClock: Date.now()
+
+  Timer {
+    interval: 60000
+    repeat: true
+    running: root.opened && root.view === "history"
+    onTriggered: root.historyClock = Date.now()
+  }
   readonly property string exportStatus: history.exportStatus
 
   function setView(next) {
     if (root.view === next) return
     root.view = next
     root.resetCursor()
-    history.exportStatus = ""
+    history.resetExportStatus()
     if (next === "history") {
-      player.nowClock = Date.now()
+      root.historyClock = Date.now()
       history.load()
     }
   }

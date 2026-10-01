@@ -5,7 +5,11 @@
 // <script id="__NEXT_DATA__">. That JSON is the only source of stream URLs
 // used here: DR does not publish a documented public API for this.
 
+// Takes a page's HTML, or data already extracted from it: the playlist
+// helpers below all start here, so a page fetched once can be parsed once
+// and handed to each of them.
 function extractNextData(html) {
+  if (html && typeof html === "object") return html
   var match = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(String(html || ""))
   if (!match) return null
   try {
@@ -525,4 +529,31 @@ function backfillWindowStart(html, anchorMs, mode) {
       if (anchorMs >= programmes[i].start && anchorMs < programmes[i].end) return programmes[i].start
   }
   return anchorMs
+}
+
+// ---- Commands ----
+// Every fetch and database call goes through these, so limits and flags
+// live in one place.
+var PLAYLIST_BASE = "https://www.dr.dk/lyd/playlister/"
+
+function curlCommand(url) {
+  return ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000", url]
+}
+
+// path: optional "<date>/<episode>" for an earlier programme's page.
+function playlistUrl(slug, path) {
+  return PLAYLIST_BASE + slug + (path ? "/" + path : "")
+}
+
+// readJson: read-only, rows as JSON (`sqlite3 -json` prints nothing for
+// zero rows). Otherwise a write that stops at the first error.
+function sqliteCommand(dbPath, sql, readJson) {
+  return readJson
+    ? ["sqlite3", "-json", "-readonly", "-cmd", ".timeout 2000", dbPath, sql]
+    : ["sqlite3", "-bail", "-cmd", ".timeout 2000", dbPath, sql]
+}
+
+// Qt.resolvedUrl(...) of a file shipped in the plugin, as a filesystem path.
+function localPath(url) {
+  return decodeURIComponent(String(url).replace(/^file:\/\//, ""))
 }

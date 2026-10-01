@@ -15,8 +15,9 @@ Item {
   property string quality: "High"
 
   // Every now-playing lookup, with the session it belongs to, so the
-  // history can log the tracks that overlap it.
-  signal playlistFetched(string slug, string html, double sessionStartedAt, double fetchedAt)
+  // history can log the tracks that overlap it. `data` is the page's
+  // already-parsed __NEXT_DATA__ (null if it had none), so it is parsed once.
+  signal playlistFetched(string slug, var data, double sessionStartedAt, double fetchedAt)
   // A listening session ended (stop, switch, or a stream that couldn't be
   // restarted); the history keeps looking it up until DR has caught up.
   signal sessionEnded(string slug, double startedAt, double endedAt)
@@ -43,7 +44,7 @@ Item {
 
   function startFetch() {
     if (fetchProc.running) return
-    fetchProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000", root.directoryUrl]
+    fetchProc.command = Model.curlCommand(root.directoryUrl)
     fetchProc.running = true
   }
 
@@ -63,7 +64,16 @@ Item {
   }
 
   function scheduleFetchRetry() {
-    if (root.fetchRetries >= 3) return
+    if (root.fetchRetries >= 3) {
+      // Out of retries: a play request waiting for the directory can't be
+      // honoured, so drop it rather than leave "Starting…" up indefinitely
+      // (and have the next middle-click stop instead of play).
+      if (root.pendingPlaySlug) {
+        root.pendingPlaySlug = ""
+        root.playbackError = root.fetchError
+      }
+      return
+    }
     root.fetchRetries++
     fetchRetryTimer.restart()
   }
@@ -239,9 +249,12 @@ Item {
   property double sessionStartedAt: 0
   property var openSession: null
 
+  // Keyed on the session's own slug, not playingSlug: during the 2 s
+  // reconnect wait after a dropped stream playingSlug is already empty, and
+  // a stop or switch then must still end the session.
   function endSession() {
-    if (root.playingSlug && root.sessionStartedAt)
-      root.sessionEnded(root.playingSlug, root.sessionStartedAt, Date.now())
+    if (root.openSession && root.sessionStartedAt)
+      root.sessionEnded(root.openSession.slug, root.sessionStartedAt, Date.now())
     root.sessionStartedAt = 0
     root.openSession = null
   }
@@ -290,8 +303,7 @@ Item {
       return
     }
     nowPlayingProc.token = root.nowPlayingToken
-    nowPlayingProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000",
-                              "https://www.dr.dk/lyd/playlister/" + root.playingSlug]
+    nowPlayingProc.command = Model.curlCommand(Model.playlistUrl(root.playingSlug))
     nowPlayingProc.running = true
   }
 
@@ -317,8 +329,9 @@ Item {
           root.nowPlaying = null
           nowPlayingTimer.interval = 300000
         } else {
-          root.nowPlaying = Model.parseNowPlayingFromHtml(raw, now)
-          root.playlistFetched(root.playingSlug, raw, root.sessionStartedAt, now)
+          var data = Model.extractNextData(raw)
+          root.nowPlaying = Model.parseNowPlayingFromHtml(data, now)
+          root.playlistFetched(root.playingSlug, data, root.sessionStartedAt, now)
           nowPlayingTimer.interval = Model.nowPlayingPollDelay(root.nowPlaying, now)
         }
         nowPlayingTimer.restart()

@@ -25,28 +25,51 @@ Item {
   readonly property string historyDir: Quickshell.env("HOME") + "/.local/state/omarchy/dr-lyd/"
   readonly property string historyPath: root.historyDir + "history.sqlite"
 
-  // Pruning (historyDays) happens once, when the directory is in place.
+  // Pruning (historyDays) runs once the directory is in place, and again
+  // whenever the setting changes — the widget's settings are injected after
+  // this component starts, so the first value seen is usually the default.
+  property bool dirReady: false
   Component.onCompleted: ensureDirProc.running = true
+  onKeepDaysChanged: root.prune()
+
+  function prune() {
+    if (root.dirReady) root.queueWrite(Model.historyPruneSql(root.keepDays))
+  }
 
   Process {
     id: ensureDirProc
     command: ["mkdir", "-p", root.historyDir]
-    onExited: root.queueWrite(Model.historyPruneSql(root.keepDays))
+    onExited: {
+      root.dirReady = true
+      root.prune()
+    }
   }
 
   // ---- Writes ----
   property var writeQueue: []
+  // Set by clear(): nothing that started before it is logged again, so
+  // lookups still in flight or queued (session ends, backfill, the next
+  // now-playing poll of a session that began earlier) can't bring cleared
+  // tracks back.
+  property double clearedAt: 0
 
   function logTracks(slug, tracks) {
     if (!root.logging) return
+    if (root.clearedAt)
+      tracks = tracks.filter(function(t) { return t.startedAt >= root.clearedAt })
     root.queueWrite(Model.historyInsertSql(slug, tracks))
   }
 
-  function logPlaylist(slug, html, sessionStartedAt, fetchedAt) {
-    root.logTracks(slug, Model.tracksForLog(html, sessionStartedAt, fetchedAt))
+  // `data`: a playlist page's HTML or its already-parsed __NEXT_DATA__.
+  function logPlaylist(slug, data, sessionStartedAt, fetchedAt) {
+    if (!root.logging) return
+    root.logTracks(slug, Model.tracksForLog(data, sessionStartedAt, fetchedAt))
   }
 
   function clear() {
+    root.clearedAt = Date.now()
+    // Inserts queued before the clear would run after the DELETE.
+    root.writeQueue = []
     root.exportStatus = ""
     root.queueWrite(Model.historyClearSql())
   }
@@ -60,7 +83,7 @@ Item {
   function runWrite() {
     if (writeProc.running || root.writeQueue.length === 0) return
     var queue = root.writeQueue.slice()
-    writeProc.command = ["sqlite3", "-bail", "-cmd", ".timeout 2000", root.historyPath, queue.shift()]
+    writeProc.command = Model.sqliteCommand(root.historyPath, queue.shift(), false)
     root.writeQueue = queue
     writeProc.running = true
   }
@@ -109,8 +132,7 @@ Item {
     }
     sessionEndProc.session = queue.splice(next, 1)[0]
     root.sessionEndQueue = queue
-    sessionEndProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000",
-                              "https://www.dr.dk/lyd/playlister/" + sessionEndProc.session.slug]
+    sessionEndProc.command = Model.curlCommand(Model.playlistUrl(sessionEndProc.session.slug))
     sessionEndProc.running = true
   }
 
@@ -121,10 +143,10 @@ Item {
       waitForEnd: true
       onStreamFinished: {
         var s = sessionEndProc.session
-        var raw = String(text || "")
+        var data = Model.extractNextData(String(text || ""))
         if (!s) return
-        if (raw) root.logTracks(s.slug, Model.tracksForLog(raw, s.startedAt, s.endedAt))
-        var done = raw && Model.playlistCaughtUp(raw, s.endedAt)
+        if (data) root.logTracks(s.slug, Model.tracksForLog(data, s.startedAt, s.endedAt))
+        var done = data && Model.playlistCaughtUp(data, s.endedAt)
         if (!done && Date.now() < s.endedAt + root.sessionEndGiveUpMs)
           root.sessionEndQueue = root.sessionEndQueue.concat([{
             slug: s.slug, startedAt: s.startedAt, endedAt: s.endedAt,
@@ -163,8 +185,8 @@ Item {
     root.backfillSlug = slug
     root.backfillUntil = Date.now()
     root.backfillSession = sessionStartedAt || root.backfillUntil
-    backfillQueryProc.command = ["sqlite3", "-json", "-readonly", "-cmd", ".timeout 2000", root.historyPath,
-                                 Model.historyFirstTodaySql(slug, Model.startOfDaySec(root.backfillUntil))]
+    backfillQueryProc.command = Model.sqliteCommand(root.historyPath,
+      Model.historyFirstTodaySql(slug, Model.startOfDaySec(root.backfillUntil)), true)
     backfillQueryProc.running = true
   }
 
@@ -183,8 +205,7 @@ Item {
 
   function fetchBackfill(path, isCurrent) {
     backfillFetchProc.isCurrent = isCurrent
-    backfillFetchProc.command = ["curl", "-fsSL", "--max-time", "10", "--max-filesize", "5000000",
-                                 "https://www.dr.dk/lyd/playlister/" + root.backfillSlug + (path ? "/" + path : "")]
+    backfillFetchProc.command = Model.curlCommand(Model.playlistUrl(root.backfillSlug, path))
     backfillFetchProc.running = true
   }
 
@@ -194,15 +215,15 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var raw = String(text || "")
-        if (!raw) return
+        var data = Model.extractNextData(String(text || ""))
+        if (!data) return
         // The current page's schedule decides where the window starts.
         if (backfillFetchProc.isCurrent)
-          root.backfillStart = Model.backfillWindowStart(raw, root.backfillAnchor, root.backfillMode)
+          root.backfillStart = Model.backfillWindowStart(data, root.backfillAnchor, root.backfillMode)
         root.logTracks(root.backfillSlug,
-                       Model.tracksForLog(raw, root.backfillSession, root.backfillUntil, root.backfillStart))
+                       Model.tracksForLog(data, root.backfillSession, root.backfillUntil, root.backfillStart))
         if (backfillFetchProc.isCurrent)
-          root.backfillPaths = Model.backfillEpisodePaths(raw, root.backfillStart, root.backfillUntil)
+          root.backfillPaths = Model.backfillEpisodePaths(data, root.backfillStart, root.backfillUntil)
       }
     }
     onExited: Qt.callLater(function() {
@@ -216,11 +237,16 @@ Item {
 
   // ---- Reading ----
   property var rows: []
+  // A load asked for while a read is running (e.g. a write finished in the
+  // meantime) runs once that read is done, instead of being dropped.
+  property bool reloadPending: false
 
   function load() {
-    if (readProc.running) return
-    readProc.command = ["sqlite3", "-json", "-readonly", "-cmd", ".timeout 2000", root.historyPath,
-                        Model.historySelectSql(500)]
+    if (readProc.running) {
+      root.reloadPending = true
+      return
+    }
+    readProc.command = Model.sqliteCommand(root.historyPath, Model.historySelectSql(500), true)
     readProc.running = true
   }
 
@@ -233,15 +259,25 @@ Item {
         root.loaded()
       }
     }
+    onExited: {
+      if (!root.reloadPending) return
+      root.reloadPending = false
+      Qt.callLater(root.load)
+    }
   }
 
   // ---- Export ----
   // Reuses the skill's history.py (shipped in this plugin), so the panel
   // and `dr-lyd.sh export` write the same Markdown. Each date is exported
   // in full from the database.
-  readonly property string historyScript: decodeURIComponent(Qt.resolvedUrl("omarchy-dr-lyd-skill/bin/history.py").toString().replace(/^file:\/\//, ""))
+  readonly property string historyScript: Model.localPath(Qt.resolvedUrl("omarchy-dr-lyd-skill/bin/history.py"))
   property string exportStatus: ""
   readonly property bool exporting: exportProc.running
+
+  // Drops the last export's result line, but not "Exporting…" while one runs.
+  function resetExportStatus() {
+    if (!exportProc.running) root.exportStatus = ""
+  }
 
   function exportDays(dates) {
     if (exportProc.running || !dates || dates.length === 0) return

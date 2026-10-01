@@ -237,4 +237,33 @@ TestCase {
     compare(Model.plainTooltipText(null), "")
     compare(Model.plainTooltipText(new Array(500).join("x")).length, 200)
   }
+
+  // ---- Commands and parse-once ----
+
+  function test_commandHelpers() {
+    compare(Model.curlCommand("https://x/y").join(" "),
+            "curl -fsSL --max-time 10 --max-filesize 5000000 https://x/y")
+    compare(Model.playlistUrl("p6beat"), "https://www.dr.dk/lyd/playlister/p6beat")
+    compare(Model.playlistUrl("p6beat", "2026-09-29/p6-beatet-1"),
+            "https://www.dr.dk/lyd/playlister/p6beat/2026-09-29/p6-beatet-1")
+    compare(Model.sqliteCommand("/db", "SELECT 1;", true).join(" "),
+            "sqlite3 -json -readonly -cmd .timeout 2000 /db SELECT 1;")
+    compare(Model.sqliteCommand("/db", "DELETE;", false).join(" "),
+            "sqlite3 -bail -cmd .timeout 2000 /db DELETE;")
+    compare(Model.localPath("file:///home/a%20b/x.py"), "/home/a b/x.py")
+  }
+
+  function test_parsedDataWorksLikeHtml() {
+    var html = playlistPage(morning)
+    var data = Model.extractNextData(html)
+    verify(data !== null)
+    compare(Model.extractNextData(data), data, "already-parsed data passes through")
+    var now = ms("2026-09-29T09:20:00+02:00")
+    var from = ms("2026-09-29T09:14:10+02:00")
+    compare(JSON.stringify(Model.tracksForLog(data, from, now)), JSON.stringify(Model.tracksForLog(html, from, now)))
+    compare(Model.nowPlayingText(Model.parseNowPlayingFromHtml(data, now)), "Pearl Jam – Animal")
+    verify(Model.playlistCaughtUp(data, now))
+    compare(Model.backfillEpisodePaths(data, ms("2026-09-29T06:00:00+02:00"), now).length, 1)
+    compare(Model.tracksForLog(null, from, now).length, 0, "no data, nothing logged")
+  }
 }
