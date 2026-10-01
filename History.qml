@@ -239,7 +239,7 @@ Item {
   // Reuses the skill's history.py (shipped in this plugin), so the panel
   // and `dr-lyd.sh export` write the same Markdown. Each date is exported
   // in full from the database.
-  readonly property string historyScript: decodeURIComponent(Qt.resolvedUrl("claude-skill/bin/history.py").toString().replace(/^file:\/\//, ""))
+  readonly property string historyScript: decodeURIComponent(Qt.resolvedUrl("omarchy-dr-lyd-skill/bin/history.py").toString().replace(/^file:\/\//, ""))
   property string exportStatus: ""
   readonly property bool exporting: exportProc.running
 

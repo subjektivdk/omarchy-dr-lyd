@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "subjektivdk.dr-lyd",
   "name": "DR Lyd",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": "Martin",
   "license": "MIT",
   "description": "Play DR's radio channels (P1-P8, regional P4/P5, LYD ekstra) straight from the bar.",

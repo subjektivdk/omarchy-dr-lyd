@@ -122,7 +122,7 @@ sqlite3 ~/.local/state/omarchy/dr-lyd/history.sqlite \
    FROM plays ORDER BY played_at DESC LIMIT 20"
 ```
 
-The bundled `claude-skill/bin/history.py` lists, searches and exports it
+The bundled `omarchy-dr-lyd-skill/bin/history.py` lists, searches and exports it
 without writing any SQL:
 
 ```bash
@@ -151,14 +151,23 @@ retry shortly` — try again in a few seconds.
 
 ## Claude Code skill
 
-[`claude-skill/`](claude-skill) is a [Claude Code](https://claude.com/claude-code)
+[`omarchy-dr-lyd-skill/`](omarchy-dr-lyd-skill) is a [Claude Code](https://claude.com/claude-code)
 skill built on the remote control above. It lets Claude switch, stop or check
 the channel ("skift til P1", "sluk radioen"), look up what you listened to
 ("hvad hørte jeg i går") and what has been played
 recently. Link it into your skills directory so it updates with the plugin:
 
 ```bash
-ln -s ~/.config/omarchy/plugins/subjektivdk.dr-lyd/claude-skill ~/.claude/skills/dr-lyd
+ln -s ~/.config/omarchy/plugins/subjektivdk.dr-lyd/omarchy-dr-lyd-skill ~/.claude/skills/dr-lyd
+```
+
+**Upgrading from 0.4.0 or earlier:** the folder used to be called
+`claude-skill/`, so an existing link breaks after `omarchy plugin update`
+(plugin folders can't contain symlinks, so there is no compatibility link).
+Point it at the new folder:
+
+```bash
+ln -sfn ~/.config/omarchy/plugins/subjektivdk.dr-lyd/omarchy-dr-lyd-skill ~/.claude/skills/dr-lyd
 ```
 
 ## Development

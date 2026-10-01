@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for claude-skill/bin/history.py. Each test runs the script as a
+"""Tests for omarchy-dr-lyd-skill/bin/history.py. Each test runs the script as a
 subprocess with HOME pointed at a temporary directory holding a scratch
 database, and with a PATH that has no omarchy-shell, so neither the real
 history nor the running shell is touched."""
@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "claude-skill", "bin", "history.py")
+SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "omarchy-dr-lyd-skill", "bin", "history.py")
 
 
 class HistoryScriptTest(unittest.TestCase):

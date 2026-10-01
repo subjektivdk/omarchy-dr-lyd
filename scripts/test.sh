@@ -31,6 +31,6 @@ QT_QPA_PLATFORM=offscreen "$qt_bin/qmltestrunner" -input tests -import . -o -,tx
 PYTHONDONTWRITEBYTECODE=1 python3 tests/test_history.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/test_state.py
 
-bash -n claude-skill/bin/dr-lyd.sh
+bash -n omarchy-dr-lyd-skill/bin/dr-lyd.sh
 
 echo "All validation and tests passed."
