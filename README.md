@@ -1,7 +1,8 @@
 # DR Lyd for Omarchy
 
-Play DR's live radio channels (P1, P2, P3, P6 Beat, P8 Jazz, LYD ekstra and all
-regional P4/P5 channels) straight from the Omarchy bar.
+Play the live channels of DR, the Danish national radio (Danmarks Radio) —
+P1, P2, P3, P6 Beat, P8 Jazz, LYD ekstra and all regional P4/P5 channels —
+straight from the Omarchy bar.
 
 ## Features
 

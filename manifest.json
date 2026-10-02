@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "subjektivdk.dr-lyd",
   "name": "DR Lyd",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": "Martin",
   "license": "MIT",
-  "description": "Play DR's radio channels (P1-P8, regional P4/P5, LYD ekstra) straight from the bar.",
+  "description": "Play DR (Danish national radio) live: P1-P8, regional P4/P5 and LYD ekstra, straight from the bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,9 +14,9 @@
   },
   "barWidget": {
     "displayName": "DR Lyd",
-    "description": "Play DR's radio channels straight from the bar",
+    "description": "Danish national radio (DR) in the bar",
     "category": "Media",
-    "aliases": ["dr", "dr-lyd", "radio", "dr radio", "p1", "p2", "p3", "p4", "p5", "p6", "p6 beat", "p8", "p8 jazz"],
+    "aliases": ["dr", "dr-lyd", "radio", "dr radio", "p1", "p2", "p3", "p4", "p5", "p6", "p6 beat", "p8", "p8 jazz", "danish", "denmark", "danmarks radio"],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
