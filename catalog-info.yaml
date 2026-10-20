@@ -1,0 +1,22 @@
+# Beskrivelse af DR Lyd til den samlede dokumentation (pixi-docs).
+# Format: Backstage catalog + pixi-udvidelser, se ~/Projects/pixi-docs/docs/manifest-format.md.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: dr-lyd
+  title: DR Lyd
+  description: DR's live-kanaler (P1-P8, regionale P4/P5, LYD ekstra) i Omarchy-baren, med favoritter og historik over spillede numre.
+  annotations:
+    github.com/project-slug: subjektivdk/omarchy-dr-lyd
+    pixi.mtj.dk/runs-on: resource:pixi
+    pixi.mtj.dk/omarchy-plugin: subjektivdk.dr-lyd
+    pixi.mtj.dk/skills: dr-lyd
+    pixi.mtj.dk/help: README.md
+spec:
+  type: omarchy-plugin
+  lifecycle: production
+  owner: user:martin
+  system: desktop
+  flows:
+    - from: resource:dr
+      data: live-lyd og playlister
