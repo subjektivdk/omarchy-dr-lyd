@@ -233,6 +233,13 @@ Panel {
 
   // The header button / r: re-fetch the directory and now-playing, and
   // backfill the playing channel's history.
+  // Help: the owner's generated docs page if pixi-docs is installed, otherwise the README.
+  function openHelp() {
+    Quickshell.execDetached(["sh", "-c",
+      "\"$HOME/.local/bin/pixi-docs\" open dr-lyd 2>/dev/null || xdg-open https://github.com/subjektivdk/omarchy-dr-lyd#readme"])
+    root.close()
+  }
+
   function refresh() {
     player.refreshDirectory()
     player.refreshNowPlaying()
@@ -519,6 +526,7 @@ Panel {
         else if (t === "c") root.setView("channels")
         else if (t === "p") root.setView("history")
         else if (t === "e" && root.view === "history") root.exportHistory()
+        else if (t === "?") root.openHelp()
       }
 
       ConfirmDialog {
@@ -572,13 +580,22 @@ Panel {
                   : "On air")
               : (root.playbackError || "Stopped")
             trailingControl: Component {
-              PanelActionButton {
-                iconText: "󰑐"
-                tooltipText: root.refreshBusy ? "Refreshing…" : "Refresh (r)"
-                enabled: !root.refreshBusy
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                onClicked: root.refresh()
+              Row {
+                PanelActionButton {
+                  iconText: "󰋗"
+                  tooltipText: "Help (?)"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  onClicked: root.openHelp()
+                }
+                PanelActionButton {
+                  iconText: "󰑐"
+                  tooltipText: root.refreshBusy ? "Refreshing…" : "Refresh (r)"
+                  enabled: !root.refreshBusy
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  onClicked: root.refresh()
+                }
               }
             }
           }
