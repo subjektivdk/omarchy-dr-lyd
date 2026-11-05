@@ -83,45 +83,47 @@ BarWidget {
     }
   }
 
-  BarIconButton {
+  // A plain WidgetButton: BarIconButton fits every icon's longest side to
+  // Style.bar.iconSize, which leaves a wide two-letter mark 5px tall.
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
+    hasVisualContent: true
+    labelVisible: false
+    fixedWidth: vertical ? -1 : Style.bar.iconSlot
+    fixedHeight: vertical ? Style.bar.iconSlot : -1
     tooltipText: root.playing
       ? Model.plainTooltipText(root.playingTitle) + (root.nowPlayingText
           ? "\n" + Model.plainTooltipText(root.nowPlayingText) + (root.nowPlayingAgeText ? " (" + root.nowPlayingAgeText + ")" : "")
           : "")
       : "DR Lyd — click for channels"
 
-    iconComponent: Component {
-      Item {
-        // Fills the optical canvas; the mark overflows it horizontally on
-        // purpose (nothing clips) and is centered on it.
-        Image {
-          id: mark
-          anchors.centerIn: parent
-          width: root.markWidth
-          height: root.markHeight
-          rotation: root.bar && root.bar.vertical ? 90 : 0
-          source: Qt.resolvedUrl("assets/dr-mark.png")
-          fillMode: Image.PreserveAspectFit
-          // Decode at physical pixels so the mark stays crisp on HiDPI.
-          sourceSize.width: Math.round(width * Screen.devicePixelRatio)
-          sourceSize.height: Math.round(height * Screen.devicePixelRatio)
-          smooth: true
-          // Hidden; MultiEffect samples it as a layer and paints the recolored copy.
-          visible: false
-          layer.enabled: true
-        }
 
-        MultiEffect {
-          anchors.fill: mark
-          rotation: mark.rotation
-          source: mark
-          colorization: 1.0
-          colorizationColor: button.foreground
-        }
-      }
+    Image {
+      id: mark
+      anchors.centerIn: parent
+      width: root.markWidth
+      height: root.markHeight
+      rotation: root.bar && root.bar.vertical ? 90 : 0
+      source: Qt.resolvedUrl("assets/dr-mark.png")
+      fillMode: Image.PreserveAspectFit
+      // Decode at physical pixels so the mark stays crisp on HiDPI.
+      sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+      sourceSize.height: Math.round(height * Screen.devicePixelRatio)
+      smooth: true
+      // Hidden; MultiEffect samples it as a layer and paints the recolored copy.
+      visible: false
+      layer.enabled: true
+    }
+
+    MultiEffect {
+      anchors.fill: mark
+      rotation: mark.rotation
+      scale: button.pressScale
+      source: mark
+      colorization: 1.0
+      colorizationColor: button.foreground
     }
 
     onPressed: function(b) {
